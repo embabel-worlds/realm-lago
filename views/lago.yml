@@ -12,6 +12,9 @@
     Every bill that has been issued and not yet collected, largest first: payment pending, or
     tried and FAILED. THE answer for "who owes us money", "unpaid invoices", "failed payments"
     (via paymentStatus = failed) and "what does <customer> owe" (via customer, a name fragment).
+    NOT an answer to anything about RETRIES or ATTEMPTS — how many times a payment was tried is
+    not recorded here, and "failed" is not "retried". NOT an answer to a question that also
+    mentions support cases, deals or the CRM: billing alone cannot see those.
   outputLabel: UnpaidInvoiceRow
   params:
     paymentStatus:
@@ -46,6 +49,8 @@
     What each customer owes, most first: unpaid invoices counted and summed per customer, with
     how many of them have FAILED collection. THE answer for "which customers owe the most" and
     "who has failed payments". A customer absent from this list owes nothing — that is an answer.
+    Billing ONLY: a question that also mentions support cases, deals or the CRM is an
+    account-level question and this view would silently drop that half of it.
   outputLabel: CustomerReceivableRow
   params:
     limit:
@@ -68,7 +73,9 @@
     billing period, largest first. THE answer for "who are our biggest customers", "how much
     recurring revenue is at stake with <customer>" and "what is <customer> subscribed to".
     Amounts are per billing period as the plan defines it — Lago's listing does not say whether
-    that is a month or a year, so do not annualize these figures.
+    that is a month or a year, so do not annualize these figures. Billing ONLY: for revenue
+    "behind open support cases", "at risk" or tied to deals, this view would silently drop the
+    condition — that is an account-level question.
   outputLabel: CustomerRecurringRow
   params:
     limit:
@@ -93,3 +100,16 @@
     MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
     RETURN i.paymentStatus AS paymentStatus, count(i) AS invoices, sum(i.amountCents) / 100.0 AS total
     ORDER BY invoices DESC
+
+- name: LagoCustomers
+  description: >-
+    Everybody billing invoices: name, website, billing email, currency and since when. THE
+    answer for "who are our billing customers". Reading it also keys every one of them to the
+    business vocabulary's CustomerAccount, which is how an account-level surface comes to know
+    about a customer only billing has heard of.
+  outputLabel: LagoCustomerRow
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)
+    RETURN c.name AS customer, c.url AS website, c.email AS email, c.currency AS currency,
+           c.customerSince AS since
+    ORDER BY customer

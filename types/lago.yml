@@ -78,6 +78,26 @@
         recordKeyField: url, producer: lagoCustomersByDomain,
         description: "The billing customer for a customer account, matched on the company domain." }
 
+  examples:
+    # STEERING — "who we bill / our customers in billing" is BillingCustomer reached from a
+    # CustomerAccount by BILLED_AS. The host's `Bill` type is the USER'S OWN household bills and
+    # has nothing to do with it. "The CRM has no record" is an account with no TRACKED_AS edge.
+    - q: "who are we billing that the CRM has no record of"
+      cypher: |
+        MATCH (a:CustomerAccount)-[:BILLED_AS]->(bc:BillingCustomer)
+        OPTIONAL MATCH (a)-[:TRACKED_AS]->(k:CrmAccount)
+        WITH a, bc, count(k) AS crmRecords
+        WHERE crmRecords = 0
+        RETURN a.name AS account, a.accountKey AS accountKey, bc.email AS billingEmail
+    - q: "which accounts have open support cases and unpaid invoices"
+      cypher: |
+        MATCH (a:CustomerAccount)-[:BILLED_AS]->(bc:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice)
+        WHERE i.paymentStatus <> 'succeeded'
+        WITH a, count(i) AS unpaidInvoices, sum(i.amountDueCents) / 100.0 AS owed
+        MATCH (a)-[:HAS_CASE]->(c:SupportCase)
+        WHERE c.status IN ['open', 'pending']
+        RETURN a.name AS account, unpaidInvoices, owed, count(c) AS openCases
+
 - name: LagoSubscription
   visibility: internal
   userAnchor: false
@@ -113,14 +133,15 @@
   parents: [BillingInvoice]
   description: >-
     A bill Lago issued, and a BillingInvoice of the business vocabulary. paymentStatus is the
-    fact to reason from. Amounts are CENTS. Only finalized invoices are bills; a draft is not.
+    fact to reason from. Amounts are CENTS. Every invoice here is FINALIZED — the producers ask Lago for
+    nothing else, because a draft is not a bill — so the document's own state is not exposed: as a
+    property it carried no information, and a generated query kept mistaking it for payment.
   properties:
     id: { identity: true, description: "Lago's own id for the invoice (lago_id)." }
     number: "The invoice number printed on it."
     customerExternalId: "The customer billed, by the business's id."
     customerName: "The customer billed."
     customerUrl: "The billed customer's website, as Lago holds it."
-    status: "draft, finalized, voided, failed or pending — the DOCUMENT's state, not the payment's."
     paymentStatus: "pending, succeeded or failed. Failed means collection was tried and did not work."
     overdue: { type: boolean, description: "True once Lago's due date has passed with the invoice unpaid." }
     disputeLostOn: "When the customer disputed the payment with their bank and won; empty otherwise."
@@ -150,6 +171,27 @@
       description: "A customer's invoices."
       brings:
         - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
+
+  examples:
+    # STEERING — "unpaid", "owes", "outstanding" are about PAYMENT: paymentStatus, never
+    # documentStatus. And money is CENTS: divide.
+    - q: "which customers have unpaid invoices"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+        WHERE i.paymentStatus <> 'succeeded'
+        RETURN i.customerName AS customer, count(i) AS unpaidInvoices,
+               sum(i.amountDueCents) / 100.0 AS owed, i.currency AS currency
+        ORDER BY owed DESC
+    # STEERING — "owes the MOST" is the largest AMOUNT, never the most invoices. A generated
+    # query counted invoices, ranked five customers with one invoice each in arbitrary order,
+    # and returned no amount at all.
+    - q: "which accounts owe us the most"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+        WHERE i.paymentStatus <> 'succeeded'
+        RETURN i.customerName AS customer, sum(i.amountDueCents) / 100.0 AS owed,
+               i.currency AS currency, count(i) AS unpaidInvoices
+        ORDER BY owed DESC
 
 - name: LagoInvoiceMetadata
   visibility: internal

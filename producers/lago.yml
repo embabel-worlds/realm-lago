@@ -118,7 +118,6 @@
     customerExternalId: customer.external_id
     customerName: customer.name
     customerUrl: customer.url
-    status: status
     paymentStatus: payment_status
     overdue: payment_overdue
     disputeLostOn: payment_dispute_lost_at
@@ -147,7 +146,6 @@
     customerExternalId: customer.external_id
     customerName: customer.name
     customerUrl: customer.url
-    status: status
     paymentStatus: payment_status
     overdue: payment_overdue
     disputeLostOn: payment_dispute_lost_at
