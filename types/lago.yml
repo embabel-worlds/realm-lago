@@ -1,0 +1,164 @@
+# Lago, typed as the business vocabulary's billing types (realm-business-vocabulary, which must
+# be installed first). A customer IS a BillingCustomer, a subscription a BillingSubscription,
+# an invoice a BillingInvoice: the node carries both labels, so a question asked about billing
+# is answered here without naming Lago, and keeps being answered when billing is a different
+# product.
+#
+# EVERY type is virtual. Nothing is mirrored; a traversal reads Lago at query time.
+#
+#   MATCH (a:CustomerAccount)-[:BILLED_AS]->(c:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice)
+#   WHERE i.paymentStatus <> 'succeeded'
+#   RETURN a.name, i.number, i.amountCents / 100.0 AS amount, i.paymentStatus
+#
+# HOW AN ACCOUNT REACHES ITS BILLING. Lago has no "company domain" field. It has a customer
+# `url`, in whatever shape somebody typed it, and this realm sends that on untouched:
+#   - `url` carries `hub: CustomerAccount`, so a Lago customer keys the vocabulary's account
+#     spine — including a customer the CRM has never heard of, which is a finding.
+#   - the BILLED_AS join asks Lago for an account's domain with its SEARCH, which is a
+#     substring match, and matches what comes back on `url` THROUGH THE SPINE: the customer
+#     whose url is that account is linked, and a stray (`notstark.com` for `stark.com`) is not.
+# Nothing here lowercases or strips anything. The spine's normalization is the one definition
+# of "the same account", and a realm that kept its own copy would drift from it.
+#
+# WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. A producer can rename a source
+# field; it cannot compute one. So these are absent rather than faked:
+#   amount        Lago speaks integer CENTS and the vocabulary major units. Exposed as
+#                 `amountCents` / `amountPaidCents`; the views divide, and a query must too.
+#   accountKey    would be the domain out of `url`. Reach the account by BILLED_AS instead.
+#   interval      is on the plan, which Lago's subscription listing does not inline.
+#   ended subscriptions  Lago lists active ones unless asked with `status[]=`, which the host
+#                 cannot send (a `[` in a parameter NAME). So a cancelled subscription is
+#                 invisible here, and "who churned" cannot be answered from billing yet.
+#   PaymentAttempt  Lago records attempts only when connected to a payment processor (and
+#                 exposes them on its paid tier). A desk that keeps its own record does so in
+#                 invoice metadata, which is reachable as LagoInvoiceMetadata.
+
+- name: LagoBooks
+  visibility: internal
+  userAnchor: false
+  description: >-
+    The billing books, as a door onto everything Lago holds. One scope, 'all', which is the
+    default — so a bare MATCH (b:LagoBooks) means the whole organization. It is not stored and
+    does not need to exist.
+  properties:
+    scope: { metadata: { identity: "true", default: "all" } }
+
+- name: LagoCustomer
+  visibility: internal
+  userAnchor: false
+  parents: [BillingCustomer]
+  description: >-
+    A customer in Lago: somebody the business invoices, and a BillingCustomer of the business
+    vocabulary. externalId is the id the BUSINESS gave the customer and is what Lago's other
+    listings filter on; id is Lago's own.
+  properties:
+    id: { identity: true, description: "Lago's own id for the customer (lago_id)." }
+    externalId: "The id the business gave this customer; what invoices and subscriptions are filtered by."
+    name: "The name invoices are made out to."
+    email: "Where invoices are sent."
+    # What identifies the COMPANY. Sent as Lago holds it; the spine normalizes.
+    url:
+      hub: CustomerAccount
+      description: "The customer's website, as typed into Lago. Keys the CustomerAccount spine."
+    currency: "The ISO 4217 currency this customer is billed in."
+    country: "ISO 3166 country code."
+    netPaymentTerm: { type: int, description: "Days the customer has to pay an invoice." }
+    customerSince: "When Lago first knew them (created_at, an ISO timestamp)."
+    slug: "Lago's short reference for the customer, the prefix of its invoice numbers."
+    scopeKey: "Echo of the books scope this customer was fetched under."
+  virtualJoins:
+    - { anchorLabel: LagoBooks, relationship: HAS_CUSTOMER, keyField: scope,
+        recordKeyField: scopeKey, producer: lagoCustomersAll,
+        description: "Every customer on the books." }
+    # The vocabulary's own edge, from the vocabulary's own anchor. recordKeyField is `url` and
+    # NOT an echo of the asked key: Lago's search is a substring match, and stamping the asked
+    # domain onto whatever it returned would make every stray a match. Read through the spine,
+    # `https://www.Stark.com/` is stark.com and `https://notstark.com` is not.
+    - { anchorLabel: CustomerAccount, relationship: BILLED_AS, keyField: accountKey,
+        recordKeyField: url, producer: lagoCustomersByDomain,
+        description: "The billing customer for a customer account, matched on the company domain." }
+
+- name: LagoSubscription
+  visibility: internal
+  userAnchor: false
+  parents: [BillingSubscription]
+  description: >-
+    Something a customer pays Lago's owner for on a schedule, and a BillingSubscription of the
+    business vocabulary. amountCents is per billing period; how long a period is lives on the
+    plan, which this listing does not carry — planCode says which plan.
+  properties:
+    id: { identity: true, description: "Lago's own id for the subscription (lago_id)." }
+    externalId: "The id the business gave this subscription."
+    customerExternalId: "The customer it belongs to, by the business's id."
+    product: "What is subscribed to, as named on the subscription."
+    planCode: "The plan's code."
+    status: "Lago's own word. Always `active` today: this realm cannot yet ask Lago for the others."
+    amountCents: { type: int, description: "Price per billing period in CENTS of `currency`." }
+    currency: "ISO 4217 code."
+    startedOn: "When the subscription began (ISO timestamp)."
+    periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp)."
+    terminatedOn: "When it was terminated; empty while it runs."
+    scopeKey: "Echo of the books scope this subscription was fetched under."
+  virtualJoins:
+    - { anchorLabel: LagoBooks, relationship: HAS_SUBSCRIPTION, keyField: scope,
+        recordKeyField: scopeKey, producer: lagoSubscriptionsAll,
+        description: "Every ACTIVE subscription on the books." }
+    - { anchorLabel: LagoCustomer, relationship: HAS_SUBSCRIPTION, keyField: externalId,
+        recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
+        description: "A customer's ACTIVE subscriptions." }
+
+- name: LagoInvoice
+  visibility: internal
+  userAnchor: false
+  parents: [BillingInvoice]
+  description: >-
+    A bill Lago issued, and a BillingInvoice of the business vocabulary. paymentStatus is the
+    fact to reason from. Amounts are CENTS. Only finalized invoices are bills; a draft is not.
+  properties:
+    id: { identity: true, description: "Lago's own id for the invoice (lago_id)." }
+    number: "The invoice number printed on it."
+    customerExternalId: "The customer billed, by the business's id."
+    customerName: "The customer billed."
+    customerUrl: "The billed customer's website, as Lago holds it."
+    status: "draft, finalized, voided, failed or pending — the DOCUMENT's state, not the payment's."
+    paymentStatus: "pending, succeeded or failed. Failed means collection was tried and did not work."
+    overdue: { type: boolean, description: "True once Lago's due date has passed with the invoice unpaid." }
+    disputeLostOn: "When the customer disputed the payment with their bank and won; empty otherwise."
+    amountCents: { type: int, description: "Total billed, in CENTS of `currency`." }
+    amountPaidCents: { type: int, description: "How much has been received, in CENTS." }
+    amountDueCents: { type: int, description: "What is still owed, in CENTS." }
+    currency: "ISO 4217 code."
+    issuedOn: "The day Lago issued it."
+    dueOn: "The day payment is due."
+    invoiceType: "subscription, one_off, add_on, credit or advance_charges."
+    sourceUrl: "Opens this invoice in Lago."
+    scopeKey: "Echo of the books scope this invoice was fetched under."
+  virtualJoins:
+    - anchorLabel: LagoBooks
+      relationship: HAS_INVOICE
+      keyField: scope
+      recordKeyField: scopeKey
+      producer: lagoInvoicesAll
+      description: "Every invoice on the books."
+      brings:
+        - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
+    - anchorLabel: LagoCustomer
+      relationship: HAS_INVOICE
+      keyField: externalId
+      recordKeyField: customerExternalId
+      producer: lagoInvoicesByCustomer
+      description: "A customer's invoices."
+      brings:
+        - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
+
+- name: LagoInvoiceMetadata
+  visibility: internal
+  userAnchor: false
+  description: >-
+    One key/value a business attached to an invoice. Lago gives these no meaning; whoever wrote
+    them did. It is where a business not connected to a payment processor keeps what Lago
+    would otherwise record for it — collection attempts, the dates on its own books.
+  properties:
+    lago_id: { identity: true, description: "Lago's id for the entry." }
+    key: "The entry's name."
+    value: "The entry's value, as text."

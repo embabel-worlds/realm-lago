@@ -1,0 +1,191 @@
+{
+ "openapi": "3.0.3",
+ "info": {
+  "title": "Lago API (curated)",
+  "version": "1.0",
+  "description": "The three Lago operations realm-lago's producers use. Every filter described here was called against Lago v1.53 and its effect counted; a parameter Lago accepts and ignores is not listed as though it narrowed."
+ },
+ "servers": [
+  {
+   "url": "http://host.docker.internal:3200/api/v1"
+  }
+ ],
+ "security": [
+  {
+   "LagoApiKey": []
+  }
+ ],
+ "components": {
+  "securitySchemes": {
+   "LagoApiKey": {
+    "type": "http",
+    "scheme": "bearer",
+    "description": "An organization API key (Developers -> API keys). Reads see the whole organization."
+   }
+  }
+ },
+ "paths": {
+  "/customers": {
+   "get": {
+    "operationId": "lagoCustomersList",
+    "summary": "List customers",
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "1-based page."
+     },
+     {
+      "name": "per_page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Page size. 100 is accepted."
+     },
+     {
+      "name": "search_term",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "SUBSTRING match over name, external id and email (verified: `bluth.com` finds Bluth Company by its billing email). It is a search, not a key: `stark.com` would also return `notstark.com`. A caller that needs the exact customer must check what came back."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "customers is the page; meta.total_count the total",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/invoices": {
+   "get": {
+    "operationId": "lagoInvoicesList",
+    "summary": "List invoices, newest first",
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "1-based page."
+     },
+     {
+      "name": "per_page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Page size. 100 is accepted."
+     },
+     {
+      "name": "external_customer_id",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only this customer's invoices, by the id the business gave the customer (verified: 4 of 49)."
+     },
+     {
+      "name": "payment_status",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "pending",
+        "succeeded",
+        "failed"
+       ]
+      },
+      "description": "pending, succeeded or failed. Narrows at the source (verified: failed 1 of 49)."
+     },
+     {
+      "name": "payment_overdue",
+      "in": "query",
+      "schema": {
+       "type": "boolean"
+      },
+      "description": "true for invoices past their due date and unpaid."
+     },
+     {
+      "name": "status",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "draft, finalized, voided, failed or pending. A draft is not yet a bill."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "invoices is the page; each carries its customer inline. Amounts are integer CENTS.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/subscriptions": {
+   "get": {
+    "operationId": "lagoSubscriptionsList",
+    "summary": "List ACTIVE subscriptions",
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "1-based page."
+     },
+     {
+      "name": "per_page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Page size. 100 is accepted."
+     },
+     {
+      "name": "external_customer_id",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only this customer's subscriptions."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "subscriptions is the page. plan_amount_cents is integer CENTS per billing period; the period's length is on the plan, which this listing does not inline.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    },
+    "description": "Lago lists ACTIVE subscriptions only unless asked for others with `status[]=...`, Rails' array syntax. That parameter is deliberately NOT declared here: the host's HTTP client refuses a query parameter whose NAME contains `[` (\"Invalid character '[' for QUERY_PARAM\"), and a declared parameter that cannot be sent fails the whole call. So this realm sees active subscriptions and says so."
+   }
+  }
+ }
+}

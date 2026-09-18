@@ -1,0 +1,17 @@
+# Lago's API — vendored and curated, not generated: the three operations this realm's
+# producers use, each described by what it was SEEN to do when called.
+#
+# Auth: an organization API key as a bearer token, held in LAGO_API_KEY (Lago: Developers ->
+# API keys; the demo stack generates one into its state volume). The realm reads what that
+# key may read, which is the whole organization.
+#
+# The server URL in the spec is the one install-specific fact this realm carries: where Lago's
+# API is AS THE APPLIANCE REACHES IT. A real install edits it.
+#
+# Every operationId is prefixed. OperationIds resolve globally across installed realms, and a
+# second billing realm with an `invoicesList` of its own would silently take these calls.
+- url: lago.json
+  name: lago
+  type: openapi
+  auth: bearer
+  token-env: LAGO_API_KEY

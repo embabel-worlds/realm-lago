@@ -1,0 +1,163 @@
+# All through Lago's own API — never its database.
+#
+# Each record shape has ONE `project`, written out once per producer that returns it: the host
+# reads this file without resolving YAML anchors, so there is no way to say it once. Keep the
+# copies identical. The vocabulary's names are on the left, Lago's on the right. `project`
+# renames; it does not compute, which is why types/lago.yml lists what the contract asks for
+# and this realm cannot yet give.
+#
+# The three `*All` producers are doors: the books have one scope, and it is not a Lago
+# parameter. `keyTemplate` with no `{keys}` in any arg means the key is sent nowhere, and
+# `echoKeyAs` stamps it on what comes back so the door's join can match it.
+
+- name: lagoCustomersAll
+  kind: api
+  operation: lagoCustomersList
+  records: "$.customers[*]"
+  keyTemplate: "{key}"
+  echoKeyAs: scopeKey
+  args: { per_page: 100 }
+  paging: { style: page, param: page, size: 100, maxPages: 50 }
+  project:
+    id: lago_id
+    externalId: external_id
+    name: name
+    email: email
+    url: url
+    currency: currency
+    country: country
+    netPaymentTerm: net_payment_term
+    customerSince: created_at
+    slug: slug
+  cache: { kind: ttl, seconds: 300 }
+
+# One account's billing customer, by the company's domain. Lago's search is a SUBSTRING match
+# over name, external id and email — a search, not a key — so this producer does NOT echo the
+# asked key onto its records: the join matches each record's own `url` through the
+# CustomerAccount spine, and a record that is some other company is left unlinked.
+- name: lagoCustomersByDomain
+  kind: api
+  operation: lagoCustomersList
+  records: "$.customers[*]"
+  keyArg: search_term
+  batchSafe: false
+  args: { per_page: 100 }
+  project:
+    id: lago_id
+    externalId: external_id
+    name: name
+    email: email
+    url: url
+    currency: currency
+    country: country
+    netPaymentTerm: net_payment_term
+    customerSince: created_at
+    slug: slug
+  # Most accounts the CRM knows are not billed yet, and a clean "nobody" is worth remembering
+  # as much as a customer: without a negative TTL every such account is asked again per query.
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+- name: lagoSubscriptionsAll
+  kind: api
+  operation: lagoSubscriptionsList
+  records: "$.subscriptions[*]"
+  keyTemplate: "{key}"
+  echoKeyAs: scopeKey
+  # ACTIVE ONLY, and not by choice. Lago returns the others only for `status[]=...`, and the
+  # host cannot send a query parameter whose name contains `[`. A customer who has cancelled
+  # is exactly who a question about churn is about, so this is a real hole: see the README.
+  args: { per_page: 100 }
+  paging: { style: page, param: page, size: 100, maxPages: 50 }
+  project:
+    id: lago_id
+    externalId: external_id
+    customerExternalId: external_customer_id
+    product: name
+    planCode: plan_code
+    status: status
+    amountCents: plan_amount_cents
+    currency: plan_amount_currency
+    startedOn: started_at
+    periodEndsOn: current_billing_period_ending_at
+    terminatedOn: terminated_at
+  cache: { kind: ttl, seconds: 300 }
+
+- name: lagoSubscriptionsByCustomer
+  kind: api
+  operation: lagoSubscriptionsList
+  records: "$.subscriptions[*]"
+  keyArg: external_customer_id
+  batchSafe: false
+  args: { per_page: 100 }
+  project:
+    id: lago_id
+    externalId: external_id
+    customerExternalId: external_customer_id
+    product: name
+    planCode: plan_code
+    status: status
+    amountCents: plan_amount_cents
+    currency: plan_amount_currency
+    startedOn: started_at
+    periodEndsOn: current_billing_period_ending_at
+    terminatedOn: terminated_at
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+- name: lagoInvoicesAll
+  kind: api
+  operation: lagoInvoicesList
+  records: "$.invoices[*]"
+  keyTemplate: "{key}"
+  echoKeyAs: scopeKey
+  # Finalized only: a draft is not yet a bill, and counting it as money owed would be wrong.
+  args: { per_page: 100, status: finalized }
+  paging: { style: page, param: page, size: 100, maxPages: 100 }
+  project:
+    id: lago_id
+    number: number
+    customerExternalId: customer.external_id
+    customerName: customer.name
+    customerUrl: customer.url
+    status: status
+    paymentStatus: payment_status
+    overdue: payment_overdue
+    disputeLostOn: payment_dispute_lost_at
+    amountCents: total_amount_cents
+    amountPaidCents: total_paid_amount_cents
+    amountDueCents: total_due_amount_cents
+    currency: currency
+    issuedOn: issuing_date
+    dueOn: payment_due_date
+    invoiceType: invoice_type
+    sourceUrl: web_url
+    metadata: metadata
+  cache: { kind: ttl, seconds: 120 }
+
+- name: lagoInvoicesByCustomer
+  kind: api
+  operation: lagoInvoicesList
+  records: "$.invoices[*]"
+  keyArg: external_customer_id
+  batchSafe: false
+  args: { per_page: 100, status: finalized }
+  paging: { style: page, param: page, size: 100, maxPages: 20 }
+  project:
+    id: lago_id
+    number: number
+    customerExternalId: customer.external_id
+    customerName: customer.name
+    customerUrl: customer.url
+    status: status
+    paymentStatus: payment_status
+    overdue: payment_overdue
+    disputeLostOn: payment_dispute_lost_at
+    amountCents: total_amount_cents
+    amountPaidCents: total_paid_amount_cents
+    amountDueCents: total_due_amount_cents
+    currency: currency
+    issuedOn: issuing_date
+    dueOn: payment_due_date
+    invoiceType: invoice_type
+    sourceUrl: web_url
+    metadata: metadata
+  cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }

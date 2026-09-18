@@ -1,0 +1,95 @@
+# The answer surface. Every view is written against the VOCABULARY labels (BillingCustomer,
+# BillingInvoice, BillingSubscription) reached through this realm's own door, which is the
+# point of the realm: the query names Lago only where it has to say which books to open. View
+# names carry the prefix because view names resolve globally, and a second billing realm would
+# otherwise silently answer for this one.
+#
+# Money leaves here in MAJOR units: Lago speaks cents, and the views are where that is put right.
+# Every invoice row carries `sourceUrl`, which opens the invoice in Lago.
+
+- name: LagoUnpaidInvoices
+  description: >-
+    Every bill that has been issued and not yet collected, largest first: payment pending, or
+    tried and FAILED. THE answer for "who owes us money", "unpaid invoices", "failed payments"
+    (via paymentStatus = failed) and "what does <customer> owe" (via customer, a name fragment).
+  outputLabel: UnpaidInvoiceRow
+  params:
+    paymentStatus:
+      type: string
+      default: ""
+      description: "Only this payment status: pending or failed. Empty = both."
+    customer:
+      type: string
+      default: ""
+      description: "Only customers whose name contains this. Empty = every customer."
+    limit:
+      type: int
+      default: 100
+      description: "Maximum invoices."
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+    // Optional filters test plain VARIABLES after a WITH. Written against the node, the engine
+    // lifts the equality out of the OR and an empty parameter filters out every row.
+    WITH i, i.paymentStatus AS paid, toLower(i.customerName) AS who
+    WHERE paid <> 'succeeded'
+      AND ($paymentStatus = '' OR paid = $paymentStatus)
+      AND ($customer = '' OR who CONTAINS toLower($customer))
+    RETURN i.number AS invoice, i.customerName AS customer, i.customerUrl AS customerUrl,
+           i.paymentStatus AS paymentStatus, i.overdue AS overdue,
+           i.amountDueCents / 100.0 AS amountDue, i.currency AS currency,
+           i.issuedOn AS issuedOn, i.dueOn AS dueOn, i.sourceUrl AS sourceUrl
+    ORDER BY i.amountDueCents DESC
+    LIMIT $limit
+
+- name: LagoReceivablesByCustomer
+  description: >-
+    What each customer owes, most first: unpaid invoices counted and summed per customer, with
+    how many of them have FAILED collection. THE answer for "which customers owe the most" and
+    "who has failed payments". A customer absent from this list owes nothing — that is an answer.
+  outputLabel: CustomerReceivableRow
+  params:
+    limit:
+      type: int
+      default: 50
+      description: "Maximum customers."
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+    WHERE i.paymentStatus <> 'succeeded'
+    RETURN i.customerName AS customer, i.customerUrl AS customerUrl, i.currency AS currency,
+           count(i) AS unpaidInvoices,
+           sum(CASE WHEN i.paymentStatus = 'failed' THEN 1 ELSE 0 END) AS failedInvoices,
+           sum(i.amountDueCents) / 100.0 AS amountDue
+    ORDER BY amountDue DESC
+    LIMIT $limit
+
+- name: LagoRecurringRevenue
+  description: >-
+    What each customer pays on a schedule: their ACTIVE subscriptions counted and summed per
+    billing period, largest first. THE answer for "who are our biggest customers", "how much
+    recurring revenue is at stake with <customer>" and "what is <customer> subscribed to".
+    Amounts are per billing period as the plan defines it — Lago's listing does not say whether
+    that is a month or a year, so do not annualize these figures.
+  outputLabel: CustomerRecurringRow
+  params:
+    limit:
+      type: int
+      default: 50
+      description: "Maximum customers."
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)
+    WHERE s.status = 'active'
+    RETURN c.name AS customer, c.url AS customerUrl, s.currency AS currency,
+           count(s) AS activeSubscriptions, collect(s.product) AS products,
+           sum(s.amountCents) / 100.0 AS perPeriod, min(s.periodEndsOn) AS nextRenewal
+    ORDER BY perPeriod DESC
+    LIMIT $limit
+
+- name: LagoPaymentStatusCounts
+  description: >-
+    How many issued invoices are in each payment status, and what they total. THE answer for
+    "how is collection going" and the figure to reconcile this realm against Lago with.
+  outputLabel: PaymentStatusCountRow
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+    RETURN i.paymentStatus AS paymentStatus, count(i) AS invoices, sum(i.amountCents) / 100.0 AS total
+    ORDER BY invoices DESC
