@@ -1,0 +1,14 @@
+name: lago
+description: >-
+  Lago, the open source billing system, as an Embabel realm: customers, subscriptions and
+  invoices as the business vocabulary's billing types. NOT A LOADABLE REALM YET — today this
+  holds only what stands beside one: `stack/`, a disposable Lago in Docker with its first boot
+  automated, and `seed/load_book.py`, which loads the billing part of a neutral book through
+  Lago's own API. The API description, types and producers come next.
+version: 0.0.1
+# Not ready to be offered: there is nothing here for a world to load yet.
+maturity: experimental
+author: Rod Johnson
+tags:
+  - integrations
+  - billing

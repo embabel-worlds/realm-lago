@@ -1,0 +1,131 @@
+# A disposable Lago (open source billing) for this realm to be proved against. The full
+# product, UI included, on http://localhost:8180 — first boot only spares you the sign-up
+# form and the trip to the developer settings for an API key.
+#
+# Stands alone (`docker compose up -d` here) or is pulled into a larger stack by
+# `include:`; every service and volume is prefixed so the merge cannot collide.
+#
+# Order is declared, not remembered: keys -> database and redis -> migrate (which also
+# creates the organisation, its user and its API key) -> api, worker, clock -> front.
+#
+# Lago wants an RSA key and several encryption secrets before it will boot. They are
+# generated once into the `lago-state` volume, never committed: a private key in a public
+# repository is a finding in every scanner, fiction or not. Each backend service sources
+# that file before it starts, which is why they share one entrypoint shim.
+
+x-lago-backend: &lago-backend
+  image: getlago/api:v1.53.0
+  entrypoint: ["/bin/bash", "-c", "set -a; . /state/lago.env; set +a; exec \"$$@\"", "--"]
+  environment: &lago-env
+    DATABASE_URL: postgresql://lago:lago@lago-db:5432/lago?search_path=public
+    REDIS_URL: redis://lago-redis:6379
+    LAGO_REDIS_CACHE_URL: redis://lago-redis:6379
+    RAILS_ENV: production
+    RAILS_LOG_TO_STDOUT: "true"
+    LAGO_API_URL: http://localhost:${LAGO_API_PORT:-3200}
+    LAGO_FRONT_URL: http://localhost:${LAGO_FRONT_PORT:-8180}
+    LAGO_DISABLE_SEGMENT: "true"
+    LAGO_DISABLE_SIGNUP: "true"
+    # No PDF renderer in the demo stack: one fewer container, and nothing here reads a PDF.
+    LAGO_DISABLE_PDF_GENERATION: "true"
+    LAGO_USE_AWS_S3: "false"
+    LAGO_CREATE_ORG: "true"
+    LAGO_ORG_NAME: Account Health Demo
+    LAGO_ORG_USER_EMAIL: demo@example.com
+  volumes:
+    - lago-state:/state:ro
+    - lago-storage:/app/storage
+
+services:
+  lago-keys:
+    image: alpine/openssl:latest
+    entrypoint: ["/bin/sh", "/stack/keys.sh"]
+    volumes:
+      - ./keys.sh:/stack/keys.sh:ro
+      - lago-state:/state
+    restart: "no"
+
+  lago-db:
+    image: getlago/postgres-partman:15.0-alpine
+    environment:
+      POSTGRES_DB: lago
+      POSTGRES_USER: lago
+      POSTGRES_PASSWORD: lago
+      PGDATA: /data/postgres
+    volumes:
+      - lago-db:/data/postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lago -d lago"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  lago-redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  lago-migrate:
+    <<: *lago-backend
+    depends_on:
+      lago-keys: { condition: service_completed_successfully }
+      lago-db: { condition: service_healthy }
+    command: ["./scripts/migrate.sh"]
+    restart: "no"
+
+  lago-api:
+    <<: *lago-backend
+    depends_on:
+      lago-migrate: { condition: service_completed_successfully }
+      lago-redis: { condition: service_healthy }
+    command: ["./scripts/start.api.sh"]
+    ports:
+      - "${LAGO_API_PORT:-3200}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health >/dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  lago-worker:
+    <<: *lago-backend
+    depends_on:
+      lago-migrate: { condition: service_completed_successfully }
+      lago-redis: { condition: service_healthy }
+    command: ["./scripts/start.worker.sh"]
+    restart: unless-stopped
+
+  # The clock is what flips an invoice to overdue once its due date passes. Without it the
+  # flag the realm reads would never move.
+  lago-clock:
+    <<: *lago-backend
+    depends_on:
+      lago-migrate: { condition: service_completed_successfully }
+      lago-redis: { condition: service_healthy }
+    command: ["./scripts/start.clock.sh"]
+    restart: unless-stopped
+
+  lago-front:
+    image: getlago/front:v1.53.0
+    depends_on:
+      lago-api: { condition: service_healthy }
+    environment:
+      API_URL: http://localhost:${LAGO_API_PORT:-3200}
+      APP_ENV: production
+      LAGO_DISABLE_SIGNUP: "true"
+      LAGO_DISABLE_PDF_GENERATION: "true"
+    ports:
+      - "${LAGO_FRONT_PORT:-8180}:80"
+    restart: unless-stopped
+
+volumes:
+  lago-db:
+  lago-state:
+  lago-storage:
