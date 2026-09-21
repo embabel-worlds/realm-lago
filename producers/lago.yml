@@ -18,6 +18,20 @@
   echoKeyAs: scopeKey
   args: { per_page: 100 }
   paging: { style: page, param: page, size: 100, maxPages: 50 }
+  # "How many billing customers" is in the first response — `meta.total_count` beside the
+  # page — so it costs one call rather than walking up to fifty, and unlike the walk the
+  # number is not bounded by `maxPages`. `records: "$"` reads the envelope: the producer's
+  # own path selects a CUSTOMER, which carries no total (me#1402).
+  aggregates:
+    - measure: count
+      valueField: meta.total_count
+      records: "$"
+  # NO pushdown, deliberately. The only filter /customers takes is `search_term`, and it is a
+  # SUBSTRING match across name, external id AND email — so `name CONTAINS 'acme'` would come
+  # back as a SUPERSET including anyone whose email merely contains it. A rule here would report
+  # the predicate absorbed, and the engine would then answer "how many" with a count of that
+  # superset: a confident, exact, wrong number. A filter the source cannot apply EXACTLY is
+  # worth more left to the graph.
   project:
     id: lago_id
     externalId: external_id
@@ -68,6 +82,11 @@
   # is exactly who a question about churn is about, so this is a real hole: see the README.
   args: { per_page: 100 }
   paging: { style: page, param: page, size: 100, maxPages: 50 }
+  # `external_customer_id` is the only filter /subscriptions declares. `plan_code` and `status`
+  # look filterable on the records and are NOT parameters of this endpoint, so they stay
+  # graph-side: claiming them would push a count over every subscription in the book.
+  pushdown:
+    - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
   project:
     id: lago_id
     externalId: external_id
@@ -112,6 +131,17 @@
   # Finalized only: a draft is not yet a bill, and counting it as money owed would be wrong.
   args: { per_page: 100, status: finalized }
   paging: { style: page, param: page, size: 100, maxPages: 100 }
+  # Lago filters through QUERY PARAMS rather than a clause list, so each rule SETS its parameter
+  # (a plain `argPath` assigns; only a trailing `-` appends). Only the three the pinned spec
+  # actually declares are here — a parameter the endpoint ignores would be reported as absorbed
+  # and the engine would then push a count over the UNFILTERED set.
+  #
+  # Properties are the names on the LEFT of `project:`, because that is what a query writes.
+  # `payment_overdue` is a boolean and reaches Lago as one, not as the word "true".
+  pushdown:
+    - { property: paymentStatus, op: EQUALS, argPath: "payment_status", clause: "{value}" }
+    - { property: overdue, op: EQUALS, argPath: "payment_overdue", clause: "{value}" }
+    - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
   project:
     id: lago_id
     number: number

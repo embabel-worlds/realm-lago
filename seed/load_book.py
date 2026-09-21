@@ -86,6 +86,88 @@ def slug(text):
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
+# A book records a country the way a person writes it; Lago wants ISO 3166-1 alpha-2 and
+# rejects the whole customer otherwise — `422 not_a_valid_country_code`, which failed the
+# entire billing load of a 2,000-account book on the first row. The book is the neutral
+# format and should not learn Lago's spelling, so the translation lives here.
+COUNTRIES = {
+    "united states": "US", "usa": "US", "united states of america": "US",
+    "united kingdom": "GB", "uk": "GB", "great britain": "GB",
+    "germany": "DE", "australia": "AU", "canada": "CA", "france": "FR",
+    "ireland": "IE", "netherlands": "NL", "spain": "ES", "italy": "IT",
+    "new zealand": "NZ", "japan": "JP", "singapore": "SG", "india": "IN",
+}
+
+
+def country_of(value):
+    """Lago's `country` field, or NOTHING when the book's spelling is not recognised.
+
+    Omitted rather than guessed: a wrong country is a quiet data error that survives into
+    every invoice, while an absent one is visibly absent. Already-valid codes pass through,
+    so a book that speaks ISO needs no table entry.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return {}
+    if len(raw) == 2 and raw.isalpha():
+        return {"country": raw.upper()}
+    code = COUNTRIES.get(raw.lower())
+    if code:
+        return {"country": code}
+    print(f"lago: country '{raw}' is not an ISO 3166-1 alpha-2 code and is not in the table — "
+          f"sending the customer without one", file=sys.stderr)
+    return {}
+
+
+def field(row, *names):
+    """The first of [names] this row actually carries, or "".
+
+    A book is a NEUTRAL format, and neutral formats vary: this loader was written against
+    one that recorded a payment's `attempted_on` and `failure_code`, and the generator
+    writes `paid_on` and no failure column at all. A bare `row["attempted_on"]` turned that
+    difference into `KeyError` partway through a 2,000-account load — after every customer
+    and subscription was already in Lago. Reading what is there, and nothing for what is
+    not, keeps a thinner book loadable without pretending it said more than it did.
+    """
+    for name in names:
+        if row.get(name):
+            return row[name]
+    return ""
+
+
+def links_to(row, payment_ids, invoice_id):
+    """Whether a refund or dispute belongs to this invoice, by whichever id its book uses.
+
+    Some books hang a refund off the PAYMENT it reverses, others off the INVOICE. Both are
+    reasonable; matching on only one silently attached nothing, which reads exactly like an
+    estate with no disputes in it.
+    """
+    return field(row, "payment_id") in payment_ids and field(row, "payment_id") != "" \
+        or field(row, "invoice_id") == invoice_id
+
+
+# Lago's own words for a billing period. A book may say either the period ("month") or the
+# cadence ("monthly") — both are ordinary ways to write it, and a bare dict lookup turned the
+# second into `KeyError: 'monthly'` partway through a 2,000-account load, after the customers
+# were already in. Accept both, and refuse anything else by NAME rather than by traceback.
+INTERVALS = {
+    "month": "monthly", "monthly": "monthly",
+    "year": "yearly", "yearly": "yearly", "annual": "yearly", "annually": "yearly",
+    "week": "weekly", "weekly": "weekly",
+    "quarter": "quarterly", "quarterly": "quarterly",
+}
+
+
+def lago_interval(value, source_id):
+    code = INTERVALS.get((value or "").strip().lower())
+    if not code:
+        raise SystemExit(
+            f"subscription {source_id} has interval '{value}', which is not one Lago bills on "
+            f"({', '.join(sorted(set(INTERVALS.values())))}). Fix the book or add the spelling."
+        )
+    return code
+
+
 def days_between(a, b):
     from datetime import date
     return (date.fromisoformat(b) - date.fromisoformat(a)).days
@@ -112,7 +194,7 @@ def load(lago, book):
         terms = days_between(mine[0]["issued_on"], mine[0]["due_on"]) if mine else 30
         lago.call("POST", "/customers", {"customer": {
             "external_id": c["source_id"], "name": c["name"], "email": c["email"], "phone": c["phone"],
-            "currency": c["currency"], "country": c["country"], "url": "https://" + c["account_key"],
+            "currency": c["currency"], **country_of(c["country"]), "url": "https://" + c["account_key"],
             "net_payment_term": terms,
             "metadata": [dict(m, display_in_invoice=False) for m in meta([
                 ("account_key", c["account_key"]), ("known_to_crm", c["known_to_crm"]),
@@ -132,7 +214,7 @@ def load(lago, book):
             lago.call("POST", "/plans", {"plan": {
                 "name": s["product"], "code": s["plan_code"], "amount_cents": cents(s["amount"]),
                 "amount_currency": s["currency"], "pay_in_advance": False,
-                "interval": {"year": "yearly", "month": "monthly"}[s["interval"]]}})
+                "interval": lago_interval(s["interval"], s["source_id"])}})
             plans.add(s["plan_code"])
             made["plans"] += 1
         if s["source_id"] not in live:
@@ -165,17 +247,19 @@ def load(lago, book):
             "fees": [{"add_on_code": code, "units": 1, "unit_amount_cents": cents(v["amount_due"]),
                       "description": v["description"]}]}})["invoice"]
 
-        attempts = sorted((p for p in payments if p["invoice_id"] == v["source_id"]), key=lambda p: p["attempted_on"])
+        attempts = sorted((p for p in payments if p["invoice_id"] == v["source_id"]),
+                          key=lambda p: field(p, "attempted_on", "paid_on"))
         pairs = [("source", f"{v['source_id']}|{v['number']}|{v['status']}"),
                  ("dates", f"issued={v['issued_on']};due={v['due_on']};paid={v['paid_on']}")]
         for n, p in enumerate(attempts, 1):
-            pairs.append((f"attempt_{n}", ";".join(x for x in (p["source_id"], p["attempted_on"], p["status"],
-                                                                 p["method"], p["failure_code"]) if x)))
+            pairs.append((f"attempt_{n}", ";".join(x for x in (
+                p["source_id"], field(p, "attempted_on", "paid_on"), p["status"],
+                field(p, "method"), field(p, "failure_code")) if x)))
         ids = {p["source_id"] for p in attempts}
         for r in refunds:
-            if r["payment_id"] in ids:
+            if links_to(r, ids, v["source_id"]):
                 pairs.append(("refund", f"{r['source_id']};{r['refunded_on']};{r['amount']} {r['currency']};{r['reason']}"))
-        mine = [d for d in disputes if d["payment_id"] in ids]
+        mine = [d for d in disputes if links_to(d, ids, v["source_id"])]
         for d in mine:
             pairs.append(("dispute", f"{d['source_id']};{d['opened_on']};{d['status']};{d['reason']}"))
 
