@@ -96,6 +96,15 @@ COUNTRIES = {
     "germany": "DE", "australia": "AU", "canada": "CA", "france": "FR",
     "ireland": "IE", "netherlands": "NL", "spain": "ES", "italy": "IT",
     "new zealand": "NZ", "japan": "JP", "singapore": "SG", "india": "IN",
+    # The Nordics and the rest of western Europe. Added after a 2,000-account book put 124
+    # customers in Stockholm and every one of them reached Lago with no country at all —
+    # silently, because an unknown country degrades to "send without one" rather than
+    # failing. A gap in this table is invisible in the load and shows up later as a
+    # customer whose country is null for no reason anyone can see.
+    "sweden": "SE", "norway": "NO", "denmark": "DK", "finland": "FI", "iceland": "IS",
+    "belgium": "BE", "austria": "AT", "switzerland": "CH", "portugal": "PT",
+    "poland": "PL", "czechia": "CZ", "czech republic": "CZ", "luxembourg": "LU",
+    "brazil": "BR", "mexico": "MX", "south africa": "ZA",
 }
 
 
