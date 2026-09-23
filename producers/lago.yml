@@ -17,7 +17,7 @@
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
   args: { per_page: 100 }
-  paging: { style: page, param: page, size: 100, maxPages: 50 }
+  paging: { style: page, param: page, size: 100, maxPages: 50, total: meta.total_count }
   # "How many billing customers" is in the first response — `meta.total_count` beside the
   # page — so it costs one call rather than walking up to fifty, and unlike the walk the
   # number is not bounded by `maxPages`. `records: "$"` reads the envelope: the producer's
@@ -81,7 +81,7 @@
   # host cannot send a query parameter whose name contains `[`. A customer who has cancelled
   # is exactly who a question about churn is about, so this is a real hole: see the README.
   args: { per_page: 100 }
-  paging: { style: page, param: page, size: 100, maxPages: 50 }
+  paging: { style: page, param: page, size: 100, maxPages: 50, total: meta.total_count }
   # `external_customer_id` is the only filter /subscriptions declares. `plan_code` and `status`
   # look filterable on the records and are NOT parameters of this endpoint, so they stay
   # graph-side: claiming them would push a count over every subscription in the book.
@@ -130,7 +130,7 @@
   echoKeyAs: scopeKey
   # Finalized only: a draft is not yet a bill, and counting it as money owed would be wrong.
   args: { per_page: 100, status: finalized }
-  paging: { style: page, param: page, size: 100, maxPages: 100 }
+  paging: { style: page, param: page, size: 100, maxPages: 100, total: meta.total_count }
   # Lago filters through QUERY PARAMS rather than a clause list, so each rule SETS its parameter
   # (a plain `argPath` assigns; only a trailing `-` appends). Only the three the pinned spec
   # actually declares are here — a parameter the endpoint ignores would be reported as absorbed
