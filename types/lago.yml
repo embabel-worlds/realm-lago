@@ -74,8 +74,11 @@
     # NOT an echo of the asked key: Lago's search is a substring match, and stamping the asked
     # domain onto whatever it returned would make every stray a match. Read through the spine,
     # `https://www.Stark.com/` is stark.com and `https://notstark.com` is not.
+    # ridesHub: when a query has already swept the books (`(:LagoBooks {scope:'all'})-[:HAS_CUSTOMER]->`),
+    # this edge is answered from those customers by the account's domain — the spine's own key —
+    # instead of one fetch per account, which is refused above 200 accounts (embabel/me#1489).
     - { anchorLabel: CustomerAccount, relationship: BILLED_AS, keyField: accountKey,
-        recordKeyField: url, producer: lagoCustomersByDomain,
+        recordKeyField: url, producer: lagoCustomersByDomain, ridesHub: true,
         description: "The billing customer for a customer account, matched on the company domain." }
 
   examples:
@@ -123,8 +126,11 @@
     - { anchorLabel: LagoBooks, relationship: HAS_SUBSCRIPTION, keyField: scope,
         recordKeyField: scopeKey, producer: lagoSubscriptionsAll,
         description: "Every ACTIVE subscription on the books." }
+    # materializedKeyField: once the books' subscriptions are swept, a customer's subscriptions are
+    # the swept records whose customerExternalId is its externalId — no fetch per customer.
     - { anchorLabel: LagoCustomer, relationship: HAS_SUBSCRIPTION, keyField: externalId,
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
+        materializedKeyField: customerExternalId,
         description: "A customer's ACTIVE subscriptions." }
 
 - name: LagoInvoice
@@ -167,6 +173,9 @@
       relationship: HAS_INVOICE
       keyField: externalId
       recordKeyField: customerExternalId
+      # Once the books' invoices are swept, a customer's invoices are the swept records whose
+      # customerExternalId is its externalId — no fetch per customer (embabel/me#1489).
+      materializedKeyField: customerExternalId
       producer: lagoInvoicesByCustomer
       description: "A customer's invoices."
       brings:
