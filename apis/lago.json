@@ -185,6 +185,111 @@
      }
     },
     "description": "Lago lists ACTIVE subscriptions only unless asked for others with `status[]=...`, Rails' array syntax. That parameter is deliberately NOT declared here: the host's HTTP client refuses a query parameter whose NAME contains `[` (\"Invalid character '[' for QUERY_PARAM\"), and a declared parameter that cannot be sent fails the whole call. So this realm sees active subscriptions and says so."
+   },
+   "post": {
+    "operationId": "lagoSubscriptionCreate",
+    "summary": "Subscribe a customer to a plan",
+    "description": "Starts billing a customer on a plan. `external_id` is the subscription's own id in the business's terms; sending the same one again returns the existing subscription and creates nothing, so a retried call cannot double-bill. A plan billed in advance is invoiced as soon as the subscription starts.",
+    "x-embabel-effect": {
+     "writes": "a subscription, and the invoices it generates from then on",
+     "reversible": "partly: it can be terminated, but invoices it has already generated stay",
+     "idempotencyKey": [
+      "subscription.external_id"
+     ]
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "required": [
+         "subscription"
+        ],
+        "properties": {
+         "subscription": {
+          "type": "object",
+          "required": [
+           "external_customer_id",
+           "plan_code",
+           "external_id"
+          ],
+          "properties": {
+           "external_customer_id": {
+            "type": "string",
+            "description": "The customer, by the id the business gave it."
+           },
+           "plan_code": {
+            "type": "string"
+           },
+           "external_id": {
+            "type": "string",
+            "description": "The subscription's own id; repeating it returns the existing subscription."
+           },
+           "name": {
+            "type": "string",
+            "description": "What the subscription is called on invoices."
+           },
+           "subscription_at": {
+            "type": "string",
+            "description": "When it starts, ISO 8601; now if omitted."
+           }
+          }
+         }
+        }
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "The subscription",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/invoices/{lago_id}/void": {
+   "post": {
+    "operationId": "lagoInvoiceVoid",
+    "summary": "Void an invoice: write off what is owed on it",
+    "description": "Marks a finalized, unpaid invoice void: nothing more is expected on it. Final: a voided invoice cannot be un-voided, and voiding it again is refused (`not_voidable`).",
+    "x-embabel-effect": {
+     "writes": "an invoice's status, to voided",
+     "reversible": "no: a void is final; the amount would have to be invoiced again",
+     "idempotencyKey": [
+      "lago_id"
+     ]
+    },
+    "parameters": [
+     {
+      "name": "lago_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": "Lago's own id for the invoice."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "The voided invoice",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
    }
   }
  }

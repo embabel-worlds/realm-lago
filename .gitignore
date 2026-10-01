@@ -2,3 +2,6 @@
 __pycache__/
 # Compose reads a .env beside the file; anything in one is local to this machine.
 stack/.env
+# The TypeScript build's dependencies. dist/node_modules/@embabel/runtime-types is force-added:
+# the compiled methods require it in the sandbox.
+node_modules/

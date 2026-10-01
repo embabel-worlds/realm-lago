@@ -1,0 +1,178 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-01T22:45:25.743Z",
+  "entries": [
+    {
+      "namespace": "customer",
+      "name": "neighbors",
+      "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hops": {
+            "type": "number"
+          },
+          "relTypes": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "hops": {
+              "type": "number"
+            },
+            "relPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "hops"
+          ]
+        }
+      },
+      "onType": "LagoCustomer",
+      "className": "LagoCustomer"
+    },
+    {
+      "namespace": "customer",
+      "name": "subscribe",
+      "description": "Start billing this customer on a plan. A plan billed in advance is invoiced at once.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "planCode": {
+            "type": "string"
+          },
+          "subscriptionId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "startsAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "planCode",
+          "subscriptionId"
+        ]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "lago_id": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "plan_code": {
+            "type": "string"
+          },
+          "started_at": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lago_id",
+          "external_id",
+          "status",
+          "plan_code"
+        ]
+      },
+      "onType": "LagoCustomer",
+      "className": "LagoCustomer"
+    },
+    {
+      "namespace": "invoice",
+      "name": "neighbors",
+      "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "hops": {
+            "type": "number"
+          },
+          "relTypes": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "number"
+          }
+        }
+      },
+      "outputSchema": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "hops": {
+              "type": "number"
+            },
+            "relPath": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "hops"
+          ]
+        }
+      },
+      "onType": "LagoInvoice",
+      "className": "LagoInvoice"
+    },
+    {
+      "namespace": "invoice",
+      "name": "writeOff",
+      "description": "Write off what is owed: Lago voids the invoice, and nothing more is expected on it. Final; a void cannot be undone. Refused here for an invoice already paid, before anything is sent.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      },
+      "outputSchema": {
+        "type": "string"
+      },
+      "onType": "LagoInvoice",
+      "className": "LagoInvoice"
+    }
+  ]
+}

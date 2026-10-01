@@ -49,6 +49,28 @@ definition of "the same account", and a realm that kept a copy of it would drift
 - `stack/` — a disposable Lago in Docker with its first boot automated.
 - `seed/load_book.py` — loads the billing part of a product-neutral book.
 
+## Working on what billing finds
+
+`LagoCustomer` and `LagoInvoice` carry methods, written in TypeScript in `src/api/`, each calling
+one of two write verbs in `apis/lago.json`:
+
+| Type | Method | Does |
+|---|---|---|
+| `LagoCustomer` | `subscribe({planCode, subscriptionId, name?, startsAt?})` | starts billing on a plan; the same `subscriptionId` again returns the subscription already there |
+| `LagoInvoice` | `writeOff()` | voids an unpaid invoice; final, and refused for a paid one before Lago is asked |
+
+Read with `gateway.cypher.query`, bind a row with `state.set`, and call the method on
+`state.get(...)`. Each verb declares `x-embabel-effect`: what it changes, whether it can be undone,
+and what identifies a repeat.
+
+**No payment reminders.** Lago's own reminder, the payment request, is a paid feature, and the open
+source edition refuses it (`feature_unavailable`). Chasing an invoice goes through the CRM or the
+support desk instead: a note and a follow-up on the customer, or a reply on their conversation.
+
+`tests/verify-writes.sh` proves both methods against a disposable Lago it starts and removes,
+never the one holding the book: a void cannot be undone, and a subscription's invoices outlive it.
+`verify.sh` runs it with `VERIFY_WRITES=1`.
+
 ## Setup
 
 1. **realm-business-vocabulary installed first.** It declares the billing types and the
