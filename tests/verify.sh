@@ -89,4 +89,12 @@ if [ -z "$SKIP_ACCOUNT_JOIN" ]; then
   check "billing customers linked to an account that is not theirs" "0" "$WRONG"
 fi
 
+echo "== the write verbs, against a disposable Lago =="
+# Opt-in: it starts and removes a second Lago in Docker, which takes a minute and some memory.
+if [ "$VERIFY_WRITES" = 1 ]; then
+  sh "$(dirname "$0")/verify-writes.sh" || fail=1
+else
+  echo "  SKIP: set VERIFY_WRITES=1 to exercise the write verbs"
+fi
+
 [ $fail -eq 0 ] && echo "ALL CHECKS PASS" || { echo "SOME CHECKS FAILED"; exit 1; }
