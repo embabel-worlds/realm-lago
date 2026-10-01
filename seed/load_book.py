@@ -37,6 +37,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -212,7 +213,11 @@ def load(lago, book):
         made["customers"] += 1
 
     plans = {p["code"] for p in lago.every("/plans", "plans")}
-    live = {s["external_id"] for s in lago.every("/subscriptions?status[]=active&status[]=pending", "subscriptions")}
+    # A deleted customer's subscriptions are still listed under their external ids; only those of a
+    # customer that exists now count as already there, as with invoices below.
+    current = {c["lago_id"] for c in lago.every("/customers", "customers")}
+    live = {s["external_id"] for s in lago.every("/subscriptions?status[]=active&status[]=pending", "subscriptions")
+            if s["lago_customer_id"] in current}
     for s in subs:
         if s["status"] == "canceled":
             skipped.append(f"subscription {s['source_id']} ({s['status']} {s['canceled_on']})")
@@ -235,8 +240,13 @@ def load(lago, book):
 
     product_of = {s["source_id"]: s["product"] for s in subs}
     addons = {a["code"] for a in lago.every("/add_ons", "add_ons")}
+    # Only invoices of a customer that exists NOW count as loaded. Lago keeps a deleted
+    # customer's finalized invoices (they are accounting records), so after a --remove the
+    # old ones are still listed; counting them would leave the re-created customer with none.
     loaded = {}
     for inv in lago.every("/invoices", "invoices"):
+        if inv["customer"]["lago_id"] not in current:
+            continue
         for m in inv.get("metadata") or []:
             if m["key"] == "source":
                 loaded[m["value"].split("|")[0]] = inv["lago_id"]
@@ -296,13 +306,43 @@ def load(lago, book):
 
 def remove(lago, book):
     ours = {c["source_id"] for c in rows(book, "billing/customers.csv")}
-    gone = 0
-    for c in lago.every("/customers", "customers"):
-        if c["external_id"] in ours:
-            lago.call("DELETE", f"/customers/{urllib.parse.quote(c['external_id'])}")
-            gone += 1
-    print(f"lago: removed {gone} customers, and with them their subscriptions and invoices. "
-          f"Plans and add-ons are left: they are the price list, and anything may use them.")
+    doomed = {c["lago_id"]: c["external_id"] for c in lago.every("/customers", "customers") if c["external_id"] in ours}
+    # Lago never deletes a finalized invoice; deleting the customer leaves it listed, and realm-lago
+    # joins an invoice to its customer by external id, so a leftover would rejoin the customer the
+    # next load re-creates under the same id. What can be voided is voided so it stops counting as
+    # owed — including the closing invoice Lago bills, a little later, for each subscription the
+    # deletion terminates. A PAID invoice cannot be voided and stays: a load from nothing needs a
+    # fresh Lago, which is what `docker compose down -v` on its services gives.
+    terminated = sum(1 for s in lago.every("/subscriptions?status[]=active", "subscriptions") if s["lago_customer_id"] in doomed)
+    before = {i["lago_id"] for i in lago.every("/invoices", "invoices") if i["customer"]["lago_id"] in doomed}
+    for external_id in sorted(doomed.values()):
+        lago.call("DELETE", f"/customers/{urllib.parse.quote(external_id)}")
+    # Closing invoices arrive from a background job, so this waits until there is one per
+    # terminated subscription — bounded, and said if it gave up.
+    voided, kept, waiting = set(), set(), True
+    for _ in range(60):
+        mine = [i for i in lago.every("/invoices", "invoices") if i["customer"]["lago_id"] in doomed]
+        for inv in mine:
+            if inv["lago_id"] in voided or inv["status"] != "finalized":
+                continue
+            if inv["payment_status"] == "succeeded":
+                kept.add(inv["lago_id"])
+            elif lago.call("POST", f"/invoices/{inv['lago_id']}/void", ok=(405, 422)) is not None:
+                voided.add(inv["lago_id"])
+        closing = [i for i in mine if i["lago_id"] not in before]
+        waiting = len(closing) < terminated or any(i["status"] != "finalized" for i in closing)
+        if not waiting:
+            break
+        time.sleep(2)
+    print(f"lago: removed {len(doomed)} customers and their subscriptions, and voided {len(voided)} unpaid invoices "
+          f"(the closing invoices of terminated subscriptions among them). Plans and add-ons are left: they are the "
+          f"price list, and anything may use them.")
+    if kept:
+        print(f"lago: {len(kept)} PAID invoices remain — Lago keeps them, and they would rejoin a customer re-created "
+              f"under the same id. To reload from nothing, recreate Lago's volumes instead.")
+    if waiting:
+        print("lago: stopped waiting for the closing invoices of terminated subscriptions; any that arrive later "
+              "are not voided.")
 
 
 def main():
