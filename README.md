@@ -47,7 +47,11 @@ definition of "the same account", and a realm that kept a copy of it would drift
 - `tests/verify.sh` — ground truth from Lago itself, then the traversal by the vocabulary's
   labels, then the views, then the account join: non-zero, and every link the same company.
 - `stack/` — a disposable Lago in Docker with its first boot automated.
-- `seed/load_book.py` — loads the billing part of a product-neutral book.
+- `seed/load_book.py` — loads the billing part of a product-neutral book. `--remove` deletes the
+  customers and voids their unpaid invoices, but Lago never deletes a finalized invoice and a PAID
+  one cannot be voided — and this realm joins an invoice to its customer by external id, so a
+  leftover would rejoin the customer a reload re-creates. Reseeding from nothing is a fresh Lago:
+  recreate its volumes, then load.
 
 ## Working on what billing finds
 
