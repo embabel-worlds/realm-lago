@@ -65,7 +65,8 @@ one of two write verbs in `apis/lago.json`:
 
 Read with `gateway.cypher.query`, bind a row with `state.set`, and call the method on
 `state.get(...)`. Each verb declares `x-embabel-effect`: what it changes, whether it can be undone,
-and what identifies a repeat.
+and what identifies a repeat. Both are `sensitive`, because both move money, so an agent asks a
+person before either even when its authority lets it act.
 
 **No payment reminders.** Lago's own reminder, the payment request, is a paid feature, and the open
 source edition refuses it (`feature_unavailable`). Chasing an invoice goes through the CRM or the

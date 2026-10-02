@@ -195,7 +195,8 @@
      "reversible": "partly: it can be terminated, but invoices it has already generated stay",
      "idempotencyKey": [
       "subscription.external_id"
-     ]
+     ],
+     "sensitive": "it bills the customer from then on"
     },
     "requestBody": {
      "required": true,
@@ -265,7 +266,8 @@
      "reversible": "no: a void is final; the amount would have to be invoiced again",
      "idempotencyKey": [
       "lago_id"
-     ]
+     ],
+     "sensitive": "it cancels money the customer owes"
     },
     "parameters": [
      {
