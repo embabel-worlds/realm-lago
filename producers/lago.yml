@@ -160,6 +160,13 @@
     invoiceType: invoice_type
     sourceUrl: web_url
     metadata: metadata
+  # A succeeded invoice is paid in full and owes nothing. Lago keeps its paid and due totals from
+  # recorded payments, and open-source Lago cannot record one (seed/load_book.py), so an invoice
+  # marked succeeded there still reports its whole amount as due — summed, every paid bill reads as
+  # owed. The status is the fact; these follow it. A pending or failed invoice keeps Lago's figures.
+  compute:
+    amountPaidCents: "CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END"
+    amountDueCents: "CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END"
   cache: { kind: ttl, seconds: 120 }
 
 - name: lagoInvoicesByCustomer
@@ -188,4 +195,11 @@
     invoiceType: invoice_type
     sourceUrl: web_url
     metadata: metadata
+  # A succeeded invoice is paid in full and owes nothing. Lago keeps its paid and due totals from
+  # recorded payments, and open-source Lago cannot record one (seed/load_book.py), so an invoice
+  # marked succeeded there still reports its whole amount as due — summed, every paid bill reads as
+  # owed. The status is the fact; these follow it. A pending or failed invoice keeps Lago's figures.
+  compute:
+    amountPaidCents: "CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END"
+    amountDueCents: "CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END"
   cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }
