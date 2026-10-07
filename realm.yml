@@ -12,6 +12,7 @@ version: 0.1.0
 # part of the vocabulary's contract cannot be met yet (see the README).
 maturity: experimental
 author: Rod Johnson
+category: finance
 tags:
   - integrations
   - billing
