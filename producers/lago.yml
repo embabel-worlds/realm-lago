@@ -159,7 +159,10 @@
     dueOn: payment_due_date
     invoiceType: invoice_type
     sourceUrl: web_url
-    metadata: metadata
+    # No `metadata`: Lago's is a list of key/value maps, which no graph property can hold, so
+    # projecting it stored nothing and warned PROPERTY_NOT_STORED on every read. A duty treats that
+    # warning as doubt about its rows, so the steward's at-risk duties could never reach a verdict.
+    # The entries reach the graph whole as LagoInvoiceMetadata, read from the record by the type.
   # A succeeded invoice is paid in full and owes nothing. Lago keeps its paid and due totals from
   # recorded payments, and open-source Lago cannot record one (seed/load_book.py), so an invoice
   # marked succeeded there still reports its whole amount as due — summed, every paid bill reads as
@@ -194,7 +197,10 @@
     dueOn: payment_due_date
     invoiceType: invoice_type
     sourceUrl: web_url
-    metadata: metadata
+    # No `metadata`: Lago's is a list of key/value maps, which no graph property can hold, so
+    # projecting it stored nothing and warned PROPERTY_NOT_STORED on every read. A duty treats that
+    # warning as doubt about its rows, so the steward's at-risk duties could never reach a verdict.
+    # The entries reach the graph whole as LagoInvoiceMetadata, read from the record by the type.
   # A succeeded invoice is paid in full and owes nothing. Lago keeps its paid and due totals from
   # recorded payments, and open-source Lago cannot record one (seed/load_book.py), so an invoice
   # marked succeeded there still reports its whole amount as due — summed, every paid bill reads as
