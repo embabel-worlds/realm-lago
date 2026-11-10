@@ -3,8 +3,8 @@
 # Each record shape has ONE `project`, written out once per producer that returns it: the host
 # reads this file without resolving YAML anchors, so there is no way to say it once. Keep the
 # copies identical. The vocabulary's names are on the left, Lago's on the right. `project`
-# renames; it does not compute, which is why types/lago.yml lists what the contract asks for
-# and this realm cannot yet give.
+# renames; `compute:` derives what the contract asks for in a shape Lago does not keep (money
+# in major units). types/lago.yml lists what the contract asks for and this realm still cannot give.
 #
 # The three `*All` producers are doors: the books have one scope, and it is not a Lago
 # parameter. `keyTemplate` with no `{keys}` in any arg means the key is sent nowhere, and
@@ -99,6 +99,9 @@
     startedOn: started_at
     periodEndsOn: current_billing_period_ending_at
     terminatedOn: terminated_at
+  # Price per billing period in major units — the vocabulary's BillingSubscription.amount.
+  compute:
+    amount: "toFloat(r.amountCents) / 100.0"
   cache: { kind: ttl, seconds: 300 }
 
 - name: lagoSubscriptionsByCustomer
@@ -120,6 +123,9 @@
     startedOn: started_at
     periodEndsOn: current_billing_period_ending_at
     terminatedOn: terminated_at
+  # Price per billing period in major units — the vocabulary's BillingSubscription.amount.
+  compute:
+    amount: "toFloat(r.amountCents) / 100.0"
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 - name: lagoInvoicesAll
@@ -170,6 +176,11 @@
   compute:
     amountPaidCents: "CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END"
     amountDueCents: "CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END"
+    # The vocabulary's own names, in major units: what a view that names no product reads.
+    # amountPaid follows the status for the same reason amountPaidCents does.
+    amount: "toFloat(r.amountCents) / 100.0"
+    amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
+    disputeLost: "r.disputeLostOn IS NOT NULL"
   cache: { kind: ttl, seconds: 120 }
 
 - name: lagoInvoicesByCustomer
@@ -208,4 +219,9 @@
   compute:
     amountPaidCents: "CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END"
     amountDueCents: "CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END"
+    # The vocabulary's own names, in major units: what a view that names no product reads.
+    # amountPaid follows the status for the same reason amountPaidCents does.
+    amount: "toFloat(r.amountCents) / 100.0"
+    amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
+    disputeLost: "r.disputeLostOn IS NOT NULL"
   cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }

@@ -13,18 +13,22 @@
 # it is the join this realm exists for, and an account join that returns zero rows passes
 # every other check here. Set SKIP_ACCOUNT_JOIN=1 to run without one.
 set -e
+# Either AUTH=user:pass or TOKEN=<appliance API key>. Both go to curl through a config file, so
+# neither appears on a command line where `ps` would show it.
+AUTHCFG=$(mktemp); trap 'rm -f "$AUTHCFG"' EXIT
+if [ -n "${TOKEN:-}" ]; then printf 'header = "Authorization: Bearer %s"\n' "$TOKEN" > "$AUTHCFG"
+else printf 'user = "%s"\n' "${AUTH:?set AUTH (user:pass) or TOKEN}" > "$AUTHCFG"; fi
 LAGO="${LAGO:-http://127.0.0.1:3200}"
 APPLIANCE="${APPLIANCE:-http://127.0.0.1:11043}"
-: "${LAGO_API_KEY:?set LAGO_API_KEY}"; : "${AUTH:?set AUTH (user:pass)}"
-
+: "${LAGO_API_KEY:?set LAGO_API_KEY}"; 
 fail=0
 check() { # name expected actual
   if [ "$2" = "$3" ]; then echo "  ok   $1 = $2"
   else echo "  FAIL $1: expected $2, got $3"; fail=1; fi
 }
-kg() { curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
+kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
          -d "$(python3 -c 'import json,sys; print(json.dumps({"cypher": sys.argv[1]}))' "$1")"; }
-view() { curl -s -u "$AUTH" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
+view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
 n() { python3 -c 'import json,sys; r=json.load(sys.stdin)["rows"]; print(r[0]["n"] if r else 0)'; }
 
 echo "== L0: ground truth, from Lago directly =="

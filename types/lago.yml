@@ -8,7 +8,7 @@
 #
 #   MATCH (a:CustomerAccount)-[:BILLED_AS]->(c:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice)
 #   WHERE i.paymentStatus <> 'succeeded'
-#   RETURN a.name, i.number, i.amountCents / 100.0 AS amount, i.paymentStatus
+#   RETURN a.name, i.number, i.amount, i.paymentStatus
 #
 # HOW AN ACCOUNT REACHES ITS BILLING. Lago has no "company domain" field. It has a customer
 # `url`, in whatever shape somebody typed it, and this realm sends that on untouched:
@@ -20,11 +20,13 @@
 # Nothing here lowercases or strips anything. The spine's normalization is the one definition
 # of "the same account", and a realm that kept its own copy would drift from it.
 #
-# WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. A producer can rename a source
-# field; it cannot compute one. So these are absent rather than faked:
-#   amount        Lago speaks integer CENTS and the vocabulary major units. Exposed as
-#                 `amountCents` / `amountPaidCents`; the views divide, and a query must too.
-#   accountKey    would be the domain out of `url`. Reach the account by BILLED_AS instead.
+# MONEY. Lago speaks integer CENTS and the vocabulary major units, so the producers COMPUTE
+# `amount` (and an invoice's `amountPaid`) in major units beside Lago's own `amountCents` /
+# `amountPaidCents` / `amountDueCents`. A view that names no product reads `amount`.
+#
+# WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. These are absent rather than faked:
+#   accountKey    would be the domain out of `url`, and the spine's normalization is the one
+#                 definition of that. Reach the account by BILLED_AS instead.
 #   interval      is on the plan, which Lago's subscription listing does not inline.
 #   ended subscriptions  Lago lists active ones unless asked with `status[]=`, which the host
 #                 cannot send (a `[` in a parameter NAME). So a cancelled subscription is
