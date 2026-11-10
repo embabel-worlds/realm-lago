@@ -70,7 +70,7 @@
     scopeKey: "Echo of the books scope this customer was fetched under."
   virtualJoins:
     - { anchorLabel: LagoBooks, relationship: HAS_CUSTOMER, keyField: scope,
-        recordKeyField: scopeKey, producer: lagoCustomersAll,
+        recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000,
         description: "Every customer on the books." }
     # The vocabulary's own edge, from the vocabulary's own anchor. recordKeyField is `url` and
     # NOT an echo of the asked key: Lago's search is a substring match, and stamping the asked
@@ -126,7 +126,7 @@
     scopeKey: "Echo of the books scope this subscription was fetched under."
   virtualJoins:
     - { anchorLabel: LagoBooks, relationship: HAS_SUBSCRIPTION, keyField: scope,
-        recordKeyField: scopeKey, producer: lagoSubscriptionsAll,
+        recordKeyField: scopeKey, producer: lagoSubscriptionsAll, maxFanoutTotal: 50000,
         description: "Every ACTIVE subscription on the books." }
     # materializedKeyField: once the books' subscriptions are swept, a customer's subscriptions are
     # the swept records whose customerExternalId is its externalId — no fetch per customer.
@@ -168,6 +168,7 @@
       keyField: scope
       recordKeyField: scopeKey
       producer: lagoInvoicesAll
+      maxFanoutTotal: 50000
       description: "Every invoice on the books."
       brings:
         - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
