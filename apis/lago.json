@@ -126,6 +126,30 @@
        "type": "string"
       },
       "description": "draft, finalized, voided, failed or pending. A draft is not yet a bill."
+     },
+     {
+      "name": "issuing_date_from",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Only invoices issued on or after this day (YYYY-MM-DD), inclusive. Narrows at the source (verified 2026-11-22: October window 75 of 4,557, equal to the database)."
+     },
+     {
+      "name": "issuing_date_to",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Only invoices issued on or before this day (YYYY-MM-DD), inclusive. Narrows at the source (verified with issuing_date_from)."
+     },
+     {
+      "name": "currency",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "Only invoices in this ISO 4217 currency. Narrows at the source (verified: EUR 3 of 4,557)."
      }
     ],
     "responses": {

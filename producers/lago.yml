@@ -138,7 +138,7 @@
   args: { per_page: 100, status: finalized }
   paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
   # Lago filters through QUERY PARAMS rather than a clause list, so each rule SETS its parameter
-  # (a plain `argPath` assigns; only a trailing `-` appends). Only the three the pinned spec
+  # (a plain `argPath` assigns; only a trailing `-` appends). Only the ones the pinned spec
   # actually declares are here — a parameter the endpoint ignores would be reported as absorbed
   # and the engine would then push a count over the UNFILTERED set.
   #
@@ -148,6 +148,11 @@
     - { property: paymentStatus, op: EQUALS, argPath: "payment_status", clause: "{value}" }
     - { property: overdue, op: EQUALS, argPath: "payment_overdue", clause: "{value}" }
     - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
+    # Issue-date windows and currency: both inclusive bounds and the currency filter were checked
+    # against Lago's own database (counts equal) before being declared absorbed.
+    - { property: issuedOn, op: GREATER_THAN_OR_EQUAL, argPath: "issuing_date_from", clause: "{value}" }
+    - { property: issuedOn, op: LESS_THAN_OR_EQUAL, argPath: "issuing_date_to", clause: "{value}" }
+    - { property: currency, op: EQUALS, argPath: "currency", clause: "{value}" }
   project:
     id: lago_id
     number: number

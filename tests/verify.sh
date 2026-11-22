@@ -29,7 +29,9 @@ check() { # name expected actual
 kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
          -d "$(python3 -c 'import json,sys; print(json.dumps({"cypher": sys.argv[1]}))' "$1")"; }
 view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
-n() { python3 -c 'import json,sys; r=json.load(sys.stdin)["rows"]; print(r[0]["n"] if r else 0)'; }
+# A refused query has no rows and an `error`; reading that as 0 once passed an exactness check
+# whose query the engine had refused outright. So a refusal prints REFUSED, which no check expects.
+n() { python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("rows") or []; print("REFUSED: " + str(d["error"])[:160] if d.get("error") else (r[0]["n"] if r else 0))'; }
 
 echo "== L0: ground truth, from Lago directly =="
 TRUTH=$(LAGO="$LAGO" python3 - <<'PY'
@@ -71,25 +73,26 @@ check "cents still owed" "$DUE_CENTS" "$(kg "MATCH (b:LagoBooks)-[:HAS_INVOICE]-
 
 echo "== L2: the views reconcile =="
 V=$(view LagoPaymentStatusCounts '{}')
-check "view: failed invoices" "$FAILED" "$(echo "$V" | python3 -c 'import json,sys; print({r["paymentStatus"]: r["invoices"] for r in json.load(sys.stdin)["data"]}.get("failed", 0))')"
-V=$(view LagoUnpaidInvoices '{}')
+check "view: failed invoices" "$FAILED" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["invoices"] for r in json.load(sys.stdin)["data"] if r["paymentStatus"] == "failed"))')"
+V=$(view LagoUnpaidInvoices '{"limit":100000}')
 check "view: unpaid invoices (empty filters must not filter)" "$UNPAID" "$(echo "$V" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
-V=$(view LagoUnpaidInvoices '{"paymentStatus":"failed"}')
+V=$(view LagoUnpaidInvoices '{"paymentStatus":"failed","limit":100000}')
 check "view: unpaid, failed only" "$FAILED" "$(echo "$V" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))')"
 V=$(view LagoReceivablesByCustomer '{}')
 check "view: who owes most, and how much" "$TOP:$TOP_CENTS" "$(echo "$V" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["customer"].replace(" ", "_"), round(r["amountDue"] * 100)))')"
-V=$(view LagoRecurringRevenue '{"limit":500}')
+V=$(view LagoRecurringRevenue '{"limit":100000}')
 check "view: active subscriptions" "$ACTIVE" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["activeSubscriptions"] for r in json.load(sys.stdin)["data"]))')"
 
 if [ -z "$SKIP_ACCOUNT_JOIN" ]; then
   echo "== L3: an account the CRM knows reaches what billing knows =="
   # Accounts exist once a CRM realm's customers have been read; read them.
   kg "MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(c) AS n" >/dev/null
-  BILLED=$(kg "MATCH (a:CustomerAccount)-[:BILLED_AS]->(c:BillingCustomer) RETURN count(DISTINCT a) AS n" | n)
+  # The books' customers are swept first, so BILLED_AS rides them (ridesHub) at any book size.
+  BILLED=$(kg "MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer) MATCH (a:CustomerAccount)-[:BILLED_AS]->(c) RETURN count(DISTINCT a) AS n" | n)
   if [ "$BILLED" -gt 0 ]; then echo "  ok   accounts joined to a billing customer = $BILLED (non-zero)"
   else echo "  FAIL accounts joined to a billing customer: 0 — the cross-realm join is not there"; fail=1; fi
   # Exactness: every link is the SAME company. Lago's search is a substring match.
-  WRONG=$(kg "MATCH (a:CustomerAccount)-[:BILLED_AS]->(c:BillingCustomer) WHERE NOT toLower(c.url) CONTAINS a.accountKey RETURN count(c) AS n" | n)
+  WRONG=$(kg "MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer) MATCH (a:CustomerAccount)-[:BILLED_AS]->(c) WHERE NOT toLower(c.url) CONTAINS a.accountKey RETURN count(c) AS n" | n)
   check "billing customers linked to an account that is not theirs" "0" "$WRONG"
 fi
 

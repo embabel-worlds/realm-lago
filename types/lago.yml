@@ -153,7 +153,7 @@
     paymentStatus: "pending, succeeded or failed. Failed means collection was tried and did not work."
     overdue: { type: boolean, description: "True once Lago's due date has passed with the invoice unpaid." }
     disputeLostOn: "When the customer disputed the payment with their bank and won; empty otherwise."
-    amountCents: { type: int, description: "Total billed, in CENTS of `currency`." }
+    amountCents: { type: int, description: "Total billed, in CENTS of `currency`. Invoices can be in different currencies: sum per currency (group by `currency`), never across them." }
     amountPaidCents: { type: int, description: "How much has been received, in CENTS." }
     amountDueCents: { type: int, description: "What is still owed, in CENTS." }
     currency: "ISO 4217 code."
