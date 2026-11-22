@@ -96,7 +96,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "EXACT: only this customer's invoices, by the id the business gave the customer (verified: 4 of 49)."
+      "description": "EXACT: only this customer's invoices, by the id the business gave the customer."
      },
      {
       "name": "payment_status",
@@ -133,7 +133,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "Only invoices issued on or after this day (YYYY-MM-DD), inclusive. Narrows at the source (verified 2026-11-22: October window 75 of 4,557, equal to the database)."
+      "description": "Only invoices issued on or after this day (YYYY-MM-DD), inclusive. Narrows at the source."
      },
      {
       "name": "issuing_date_to",
@@ -149,7 +149,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "Only invoices in this ISO 4217 currency. Narrows at the source (verified: EUR 3 of 4,557)."
+      "description": "Only invoices in this ISO 4217 currency. Narrows at the source."
      }
     ],
     "responses": {
@@ -190,7 +190,7 @@
     ],
     "responses": {
      "200": {
-      "description": "plans is the page (name, code, interval, amount_cents, amount_currency); meta.total_count the total (verified: 25).",
+      "description": "plans is the page (name, code, interval, amount_cents, amount_currency); meta.total_count the total.",
       "content": {
        "application/json": {
         "schema": {
@@ -214,7 +214,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "The plan code a subscription carries as plan_code (verified: plan_std is Platform Licence, monthly)."
+      "description": "The plan code a subscription carries as plan_code."
      }
     ],
     "responses": {

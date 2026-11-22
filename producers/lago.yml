@@ -128,9 +128,9 @@
     amount: "toFloat(r.amountCents) / 100.0"
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
-# THE PLANS. A subscription carries only its plan's CODE (`plan_std`); the name people use
-# ("Platform Licence") and how long one billing period lasts live on the plan, which Lago lists
-# apart. A book has few plans — 25 here, one page — so the door reads them all, and the by-code
+# THE PLANS. A subscription carries only its plan's CODE; the name people use and how long one
+# billing period lasts live on the plan, which Lago lists apart. A book has few plans — typically
+# one page — so the door reads them all, and the by-code
 # lookup is what a subscription's ON_PLAN uses when only a few are asked about.
 - name: lagoPlansAll
   kind: api
@@ -156,7 +156,7 @@
   operation: lagoPlanGet
   records: "$.plan"
   # `keyArgs`, not `keyArg`: the code is a PATH parameter, and keyArg sent it as a one-element
-  # list (`/plans/[plan_std]`, a 404). keyArgs hands each key over as a scalar, one call per key.
+  # list (`/plans/[<code>]`, a 404). keyArgs hands each key over as a scalar, one call per key.
   keyArgs: [code]
   project:
     id: lago_id

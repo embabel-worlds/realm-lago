@@ -145,7 +145,7 @@
   properties:
     id: { identity: true, description: "Lago's own id for the plan (lago_id)." }
     code: "The plan's code; what a subscription's planCode names."
-    name: "The plan's name, as people say it (\"Platform Licence\")."
+    name: "The plan's name, as people say it."
     interval: "How often it bills, in Lago's word: weekly, monthly, quarterly, semiannual or yearly."
     amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency`." }
     amount: { type: float, description: "Base price per billing period, in major units of `currency`." }
