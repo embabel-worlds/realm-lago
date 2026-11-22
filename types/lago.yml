@@ -117,7 +117,7 @@
     product: "What is subscribed to, as named on the subscription."
     planCode: "The plan's code, not its name: ON_PLAN reaches the plan and its name."
     status: "Lago's own word. Always `active` today: this realm cannot yet ask Lago for the others."
-    amountCents: { type: int, description: "Price per billing period in CENTS of `currency`." }
+    amountCents: { type: int, description: "Price per billing period in CENTS of `currency`. The same price in major units is `amount`." }
     currency: "ISO 4217 code."
     startedOn: "When the subscription began (ISO timestamp)."
     periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp)."
@@ -147,7 +147,7 @@
     code: "The plan's code; what a subscription's planCode names."
     name: "The plan's name, as people say it."
     interval: "How often it bills, in Lago's word: weekly, monthly, quarterly, semiannual or yearly."
-    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency`." }
+    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency`. In major units: `amount`." }
     amount: { type: float, description: "Base price per billing period, in major units of `currency`." }
     currency: "ISO 4217 code."
     scopeKey: "Echo of the books scope this plan was fetched under."
@@ -179,9 +179,10 @@
     paymentStatus: "pending, succeeded or failed. Failed means collection was tried and did not work."
     overdue: { type: boolean, description: "True once Lago's due date has passed with the invoice unpaid." }
     disputeLostOn: "When the customer disputed the payment with their bank and won; empty otherwise."
-    amountCents: { type: int, description: "Total billed, in CENTS of `currency`. Invoices can be in different currencies: sum per currency (group by `currency`), never across them." }
-    amountPaidCents: { type: int, description: "How much has been received, in CENTS." }
-    amountDueCents: { type: int, description: "What is still owed, in CENTS." }
+    amountCents: { type: int, description: "Total billed, in CENTS of `currency`; in major units it is `amount`. Invoices can be in different currencies: sum per currency (group by `currency`), never across them." }
+    amountPaidCents: { type: int, description: "How much has been received, in CENTS; in major units it is `amountPaid`." }
+    amountDueCents: { type: int, description: "What is still owed, in CENTS; in major units it is `amountDue`." }
+    amountDue: { type: float, description: "What is still owed, in major units of `currency`." }
     currency: "ISO 4217 code."
     issuedOn: "The day Lago issued it."
     dueOn: "The day payment is due."

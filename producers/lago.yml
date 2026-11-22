@@ -226,6 +226,7 @@
     # amountPaid follows the status for the same reason amountPaidCents does.
     amount: "toFloat(r.amountCents) / 100.0"
     amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
+    amountDue: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END) / 100.0"
     disputeLost: "r.disputeLostOn IS NOT NULL"
   cache: { kind: ttl, seconds: 120 }
 
@@ -269,5 +270,6 @@
     # amountPaid follows the status for the same reason amountPaidCents does.
     amount: "toFloat(r.amountCents) / 100.0"
     amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
+    amountDue: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END) / 100.0"
     disputeLost: "r.disputeLostOn IS NOT NULL"
   cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }
