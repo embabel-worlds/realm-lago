@@ -96,7 +96,6 @@ A producer can rename a source field; it cannot compute one. These are absent, n
 | `amount` in major units | `amountCents`, `amountPaidCents`, `amountDueCents` | Lago speaks integer cents. The views divide; a hand-written query must too. |
 | `accountKey` on a billing record | — | It would be the domain out of `url`. Reach the account by `BILLED_AS` instead. |
 | `BillingSubscription.interval` | `planCode` | The period is on the plan, which Lago's subscription listing does not inline. Do not annualize `amountCents`. |
-| ended subscriptions | active only | Lago returns the rest only for `status[]=…`, and the host's HTTP client refuses a query parameter whose *name* contains `[`. A cancelled subscription is invisible here, so "who churned" cannot be answered from billing yet. |
 | `PaymentAttempt` | `LagoInvoiceMetadata` | Lago records attempts only when connected to a payment processor, and exposes them on its paid tier. A business that keeps its own record does so in invoice metadata. Reason from `paymentStatus`. |
 
 ## A note on the demo book's dates

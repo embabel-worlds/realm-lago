@@ -77,9 +77,8 @@
   records: "$.subscriptions[*]"
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
-  # ACTIVE ONLY, and not by choice. Lago returns the others only for `status[]=...`, and the
-  # host cannot send a query parameter whose name contains `[`. A customer who has cancelled
-  # is exactly who a question about churn is about, so this is a real hole: see the README.
+  # ACTIVE ONLY, by choice: this is the door every "what do they pay" view reads, and Lago's default
+  # listing is exactly the subscriptions that bill. Ended ones come through lagoSubscriptionsAnyStatus.
   args: { per_page: 100 }
   paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
   # `external_customer_id` is the only filter /subscriptions declares. `plan_code` and `status`
@@ -100,6 +99,34 @@
     periodEndsOn: current_billing_period_ending_at
     terminatedOn: terminated_at
   # Price per billing period in major units — the vocabulary's BillingSubscription.amount.
+  compute:
+    amount: "toFloat(r.amountCents) / 100.0"
+  cache: { kind: ttl, seconds: 300 }
+
+# Every subscription whatever its status: what churn, cancellation and "did they ever" questions need.
+# Lago lists the others only when `status[]` names them, once per status.
+- name: lagoSubscriptionsAnyStatus
+  kind: api
+  operation: lagoSubscriptionsList
+  records: "$.subscriptions[*]"
+  keyTemplate: "{key}"
+  echoKeyAs: scopeKey
+  args: { per_page: 100, "status[]": [active, pending, canceled, terminated] }
+  paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
+  pushdown:
+    - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
+  project:
+    id: lago_id
+    externalId: external_id
+    customerExternalId: external_customer_id
+    product: name
+    planCode: plan_code
+    status: status
+    amountCents: plan_amount_cents
+    currency: plan_amount_currency
+    startedOn: started_at
+    periodEndsOn: current_billing_period_ending_at
+    terminatedOn: terminated_at
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
   cache: { kind: ttl, seconds: 300 }

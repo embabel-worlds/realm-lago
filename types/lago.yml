@@ -27,9 +27,6 @@
 # WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. These are absent rather than faked:
 #   accountKey    would be the domain out of `url`, and the spine's normalization is the one
 #                 definition of that. Reach the account by BILLED_AS instead.
-#   ended subscriptions  Lago lists active ones unless asked with `status[]=`, which the host
-#                 cannot send (a `[` in a parameter NAME). So a cancelled subscription is
-#                 invisible here, and "who churned" cannot be answered from billing yet.
 #   PaymentAttempt  Lago records attempts only when connected to a payment processor (and
 #                 exposes them on its paid tier). A desk that keeps its own record does so in
 #                 invoice metadata, which is reachable as LagoInvoiceMetadata.
@@ -116,7 +113,7 @@
     customerExternalId: "The customer it belongs to, by the business's id."
     product: "What is subscribed to, as named on the subscription."
     planCode: "The plan's code, not its name: ON_PLAN reaches the plan and its name."
-    status: "Lago's own word. Always `active` today: this realm cannot yet ask Lago for the others."
+    status: "Lago's own word: active, pending, canceled or terminated. HAS_SUBSCRIPTION reaches active ones only; HAS_ANY_SUBSCRIPTION reaches every status."
     amountCents: { type: int, description: "Price per billing period in CENTS of `currency`. The same price in major units is `amount`." }
     currency: "ISO 4217 code."
     startedOn: "When the subscription began (ISO timestamp)."
@@ -127,6 +124,10 @@
     - { anchorLabel: LagoBooks, relationship: HAS_SUBSCRIPTION, keyField: scope,
         recordKeyField: scopeKey, producer: lagoSubscriptionsAll, maxFanoutTotal: 50000,
         description: "Every ACTIVE subscription on the books." }
+    # Every status, for churn and cancellation questions: the active door above stays the one billing views read.
+    - { anchorLabel: LagoBooks, relationship: HAS_ANY_SUBSCRIPTION, keyField: scope,
+        recordKeyField: scopeKey, producer: lagoSubscriptionsAnyStatus, maxFanoutTotal: 50000,
+        description: "Every subscription on the books, whatever its status: active, pending, canceled or terminated." }
     # materializedKeyField: once the books' subscriptions are swept, a customer's subscriptions are
     # the swept records whose customerExternalId is its externalId — no fetch per customer.
     - { anchorLabel: LagoCustomer, relationship: HAS_SUBSCRIPTION, keyField: externalId,
