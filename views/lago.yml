@@ -72,8 +72,9 @@
     What each customer pays on a schedule: their ACTIVE subscriptions counted and summed per
     billing period, largest first. THE answer for "who are our biggest customers", "how much
     recurring revenue is at stake with <customer>" and "what is <customer> subscribed to".
-    Amounts are per billing period as the plan defines it — Lago's listing does not say whether
-    that is a month or a year, so do not annualize these figures. Billing ONLY: for revenue
+    Amounts are per billing period as the plan defines it; the subscription does not say how long
+    that is — its plan does (`(s)-[:ON_PLAN]->(p:LagoPlan)`, `p.interval`). Do not annualize
+    without it. Billing ONLY: for revenue
     "behind open support cases", "at risk" or tied to deals, this view would silently drop the
     condition — that is an account-level question.
   outputLabel: CustomerRecurringRow
@@ -119,3 +120,20 @@
     RETURN c.name AS customer, c.url AS website, c.email AS email, c.currency AS currency,
            c.customerSince AS since
     ORDER BY customer
+
+- name: LagoPlanMix
+  description: >-
+    Which plans customers are on: one row per plan with its name, code, billing interval and base
+    price, and how many ACTIVE subscriptions and distinct customers are on it, most first. THE
+    answer for "what plans do customers have", "which plan is most popular", "how many customers
+    are on <plan>". Plans nobody is on are listed with zero.
+  outputLabel: PlanMixRow
+  # The books' plans and subscriptions are both swept, so each subscription finds its plan by code
+  # (ON_PLAN's materializedKeyField) instead of one lookup per subscription.
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:LagoPlan)
+    OPTIONAL MATCH (b)-[:HAS_SUBSCRIPTION]->(s:LagoSubscription)-[:ON_PLAN]->(p)
+    RETURN p.name AS plan, p.code AS code, p.interval AS interval, p.amount AS basePrice,
+           p.currency AS currency, count(s) AS activeSubscriptions,
+           count(DISTINCT s.customerExternalId) AS customers
+    ORDER BY activeSubscriptions DESC, plan

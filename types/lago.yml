@@ -27,7 +27,6 @@
 # WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. These are absent rather than faked:
 #   accountKey    would be the domain out of `url`, and the spine's normalization is the one
 #                 definition of that. Reach the account by BILLED_AS instead.
-#   interval      is on the plan, which Lago's subscription listing does not inline.
 #   ended subscriptions  Lago lists active ones unless asked with `status[]=`, which the host
 #                 cannot send (a `[` in a parameter NAME). So a cancelled subscription is
 #                 invisible here, and "who churned" cannot be answered from billing yet.
@@ -109,14 +108,14 @@
   parents: [BillingSubscription]
   description: >-
     Something a customer pays Lago's owner for on a schedule, and a BillingSubscription of the
-    business vocabulary. amountCents is per billing period; how long a period is lives on the
-    plan, which this listing does not carry — planCode says which plan.
+    business vocabulary. amountCents is per billing period; how long a period is, and the plan's
+    name, live on the plan: ON_PLAN reaches it (planCode is only its code).
   properties:
     id: { identity: true, description: "Lago's own id for the subscription (lago_id)." }
     externalId: "The id the business gave this subscription."
     customerExternalId: "The customer it belongs to, by the business's id."
     product: "What is subscribed to, as named on the subscription."
-    planCode: "The plan's code."
+    planCode: "The plan's code, not its name: ON_PLAN reaches the plan and its name."
     status: "Lago's own word. Always `active` today: this realm cannot yet ask Lago for the others."
     amountCents: { type: int, description: "Price per billing period in CENTS of `currency`." }
     currency: "ISO 4217 code."
@@ -134,6 +133,33 @@
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
         materializedKeyField: customerExternalId,
         description: "A customer's ACTIVE subscriptions." }
+
+- name: LagoPlan
+  visibility: internal
+  userAnchor: false
+  parents: [BillingPlan]
+  description: >-
+    A plan in Lago, and a BillingPlan of the business vocabulary: the name people use for what a
+    subscription is on, its base price and how often it bills. Reached from a subscription by
+    ON_PLAN, or every plan from the books by HAS_PLAN.
+  properties:
+    id: { identity: true, description: "Lago's own id for the plan (lago_id)." }
+    code: "The plan's code; what a subscription's planCode names."
+    name: "The plan's name, as people say it (\"Platform Licence\")."
+    interval: "How often it bills, in Lago's word: weekly, monthly, quarterly, semiannual or yearly."
+    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency`." }
+    amount: { type: float, description: "Base price per billing period, in major units of `currency`." }
+    currency: "ISO 4217 code."
+    scopeKey: "Echo of the books scope this plan was fetched under."
+  virtualJoins:
+    - { anchorLabel: LagoBooks, relationship: HAS_PLAN, keyField: scope,
+        recordKeyField: scopeKey, producer: lagoPlansAll, maxFanoutTotal: 5000,
+        description: "Every plan on the books." }
+    # materializedKeyField: once the books' plans are swept, a subscription's plan is the swept plan
+    # whose code is its planCode — thousands of subscriptions on a handful of plans need no fetch each.
+    - { anchorLabel: LagoSubscription, relationship: ON_PLAN, keyField: planCode,
+        recordKeyField: code, producer: lagoPlanByCode, materializedKeyField: code,
+        description: "The plan a subscription is on: its name and billing interval." }
 
 - name: LagoInvoice
   visibility: internal

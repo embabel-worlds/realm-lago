@@ -166,6 +166,71 @@
     }
    }
   },
+  "/plans": {
+   "get": {
+    "operationId": "lagoPlansList",
+    "summary": "List plans",
+    "parameters": [
+     {
+      "name": "page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "1-based page."
+     },
+     {
+      "name": "per_page",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Page size. 100 is accepted."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "plans is the page (name, code, interval, amount_cents, amount_currency); meta.total_count the total (verified: 25).",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/plans/{code}": {
+   "get": {
+    "operationId": "lagoPlanGet",
+    "summary": "One plan by its code",
+    "parameters": [
+     {
+      "name": "code",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": "The plan code a subscription carries as plan_code (verified: plan_std is Platform Licence, monthly)."
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "plan is the record.",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/subscriptions": {
    "get": {
     "operationId": "lagoSubscriptionsList",

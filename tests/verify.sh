@@ -71,6 +71,30 @@ check "subscriptions reached THROUGH their customers" "$SUBS" "$(kg "MATCH (b:La
 check "invoices reached THROUGH their customers" "$INVOICES" "$(kg "MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice) RETURN count(i) AS n" | n)"
 check "cents still owed" "$DUE_CENTS" "$(kg "MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice) WHERE i.paymentStatus <> 'succeeded' RETURN sum(i.amountDueCents) AS n" | n)"
 
+echo "== L1b: plans, and every subscription reaches its plan =="
+# Ground truth from Lago: how many plans, and the plan the most active subscriptions are on, by NAME
+# (a subscription carries only the code; the name is the plan's).
+PLANS_TRUTH=$(LAGO="$LAGO" python3 - <<'PY'
+import json, os, urllib.request, collections
+base, key = os.environ["LAGO"] + "/api/v1", os.environ["LAGO_API_KEY"]
+def every(path, name):
+    page = 1
+    while page:
+        req = urllib.request.Request(f"{base}{path}?per_page=100&page={page}", headers={"Authorization": "Bearer " + key})
+        d = json.load(urllib.request.urlopen(req)); yield from d[name]; page = d["meta"].get("next_page")
+plans = {p["code"]: p["name"] for p in every("/plans", "plans")}
+by = collections.Counter(plans.get(s["plan_code"], "?") for s in every("/subscriptions", "subscriptions"))
+top, n = by.most_common(1)[0]
+print(f"{len(plans)} {top.replace(' ', '_')}:{n}")
+PY
+)
+PLANS=${PLANS_TRUTH% *}; TOP_PLAN=${PLANS_TRUTH#* }
+check "plans, asked for as BillingPlan" "$PLANS" "$(kg "MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:BillingPlan) RETURN count(p) AS n" | n)"
+check "subscriptions that reach their plan by ON_PLAN" "$SUBS" "$(kg "MATCH (b:LagoBooks)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p:BillingPlan) RETURN count(s) AS n" | n)"
+V=$(view LagoPlanMix '{}')
+check "view: the plan most subscriptions are on, by name" "$TOP_PLAN" "$(echo "$V" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["plan"].replace(" ", "_"), r["activeSubscriptions"]))')"
+check "view: plan mix covers every active subscription" "$SUBS" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["activeSubscriptions"] for r in json.load(sys.stdin)["data"]))')"
+
 echo "== L2: the views reconcile =="
 V=$(view LagoPaymentStatusCounts '{}')
 check "view: failed invoices" "$FAILED" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["invoices"] for r in json.load(sys.stdin)["data"] if r["paymentStatus"] == "failed"))')"
