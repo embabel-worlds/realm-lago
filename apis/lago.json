@@ -234,7 +234,7 @@
   "/subscriptions": {
    "get": {
     "operationId": "lagoSubscriptionsList",
-    "summary": "List ACTIVE subscriptions",
+    "summary": "List subscriptions (ACTIVE unless `status[]` asks for others)",
     "parameters": [
      {
       "name": "page",
@@ -259,6 +259,26 @@
        "type": "string"
       },
       "description": "EXACT: only this customer's subscriptions."
+     },
+     {
+      "name": "status[]",
+      "in": "query",
+      "style": "form",
+      "explode": true,
+      "required": false,
+      "description": "Statuses to list: active, pending, canceled, terminated. Repeated once per value; absent means active only.",
+      "schema": {
+       "type": "array",
+       "items": {
+        "type": "string",
+        "enum": [
+         "active",
+         "pending",
+         "canceled",
+         "terminated"
+        ]
+       }
+      }
      }
     ],
     "responses": {
@@ -273,7 +293,7 @@
       }
      }
     },
-    "description": "Lago lists ACTIVE subscriptions only unless asked for others with `status[]=...`, Rails' array syntax. That parameter is deliberately NOT declared here: the host's HTTP client refuses a query parameter whose NAME contains `[` (\"Invalid character '[' for QUERY_PARAM\"), and a declared parameter that cannot be sent fails the whole call. So this realm sees active subscriptions and says so."
+    "description": "Lago lists ACTIVE subscriptions unless asked for others with `status[]=...`, Rails' array syntax: repeat it once per status wanted (active, pending, canceled, terminated)."
    },
    "post": {
     "operationId": "lagoSubscriptionCreate",
