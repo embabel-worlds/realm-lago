@@ -117,7 +117,7 @@
     amountCents: { type: int, description: "Price per billing period in CENTS of `currency`. The same price in major units is `amount`." }
     currency: "ISO 4217 code."
     startedOn: "When the subscription began (ISO timestamp)."
-    periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp)."
+    periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp). It renews every period, not once: a monthly subscription renews again a month later, so its renewals in a span of time are every period end inside it, not only this one."
     terminatedOn: "When it was terminated; empty while it runs."
     scopeKey: "Echo of the books scope this subscription was fetched under."
   virtualJoins:
