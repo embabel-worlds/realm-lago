@@ -1,5 +1,6 @@
-# Lago's API — vendored and curated, not generated: the three operations this realm's
-# producers use, each described by what it was SEEN to do when called.
+# Lago's API — vendored and curated, not generated: the operations this realm's
+# producers and methods use, each described by what it was SEEN to do when called. A query
+# parameter the spec does not declare is never sent, so a filter rule needs its parameter here.
 #
 # Auth: an organization API key as a bearer token, held in LAGO_API_KEY (Lago: Developers ->
 # API keys; the demo stack generates one into its state volume). The realm reads what that
