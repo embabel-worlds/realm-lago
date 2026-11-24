@@ -8,7 +8,7 @@
 #
 #   MATCH (a:CustomerAccount)-[:BILLED_AS]->(c:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice)
 #   WHERE i.paymentStatus <> 'succeeded'
-#   RETURN a.name, i.number, i.amount, i.paymentStatus
+#   RETURN a.name, i.number, i.amountDue, i.currency, i.paymentStatus
 #
 # HOW AN ACCOUNT REACHES ITS BILLING. Lago has no "company domain" field. It has a customer
 # `url`, in whatever shape somebody typed it, and this realm sends that on untouched:
@@ -20,13 +20,25 @@
 # Nothing here lowercases or strips anything. The spine's normalization is the one definition
 # of "the same account", and a realm that kept its own copy would drift from it.
 #
-# MONEY. Lago speaks integer CENTS and the vocabulary major units, so the producers COMPUTE
-# `amount` (and an invoice's `amountPaid`) in major units beside Lago's own `amountCents` /
-# `amountPaidCents` / `amountDueCents`. A view that names no product reads `amount`.
+# IDENTITY. `id` is Lago's own id (lago_id) on every type. What the BUSINESS calls a customer or a
+# subscription is `externalId`, and that is the key every other listing filters on — so a customer
+# is addressed by `externalId` (one call), never by walking the book.
+#
+# MONEY. Lago speaks integer CENTS (minor units: 10000 is 100.00) and the vocabulary major units, so
+# the producers COMPUTE `amount` (and an invoice's `amountPaid`, `amountDue`) in major units beside
+# Lago's own `amountCents` / `amountPaidCents` / `amountDueCents`. Money is always in its record's
+# `currency`; never add two currencies together.
+#
+# TWO CLOCKS. Every date Lago holds is Lago's: when the record was made or billed IN LAGO. A book
+# migrated into Lago keeps the business's own dates beside them — an invoice's in its metadata
+# (`dates`: issued=…;due=…;paid=…), a subscription's start as `subscriptionAt`. The two differ for
+# anything that existed before Lago did, and every date property below says which clock it reads.
 #
 # WHAT THE CONTRACT ASKS FOR AND THIS REALM CANNOT YET GIVE. These are absent rather than faked:
 #   accountKey    would be the domain out of `url`, and the spine's normalization is the one
 #                 definition of that. Reach the account by BILLED_AS instead.
+#   paidOn        open-source Lago records no payment, so it has no paid date. A migrated book's
+#                 own paid date is in the invoice's `dates` metadata.
 #   PaymentAttempt  Lago records attempts only when connected to a payment processor (and
 #                 exposes them on its paid tier). A desk that keeps its own record does so in
 #                 invoice metadata, which is reachable as LagoInvoiceMetadata.
@@ -35,39 +47,73 @@
   visibility: internal
   userAnchor: false
   description: >-
-    The billing books, as a door onto everything Lago holds. One scope, 'all', which is the
-    default — so a bare MATCH (b:LagoBooks) means the whole organization. It is not stored and
-    does not need to exist.
+    The billing books: the door onto everything Lago holds. One scope, 'all', the default, so a
+    bare (b:LagoBooks) means the whole organization; never stored. Each edge sends the filters a
+    query puts on it (customer, status, dates, currency, plan) to Lago, so a narrow question reads
+    a narrow page.
   properties:
-    scope: { metadata: { identity: "true", default: "all" } }
+    scope: { metadata: { identity: "true", default: "all" }, description: "Which books: always 'all', the default. Not a Lago field; it only names the door." }
+
+- name: LagoCustomerSearch
+  visibility: internal
+  userAnchor: false
+  description: >-
+    A search of Lago's customers by a term; one node per term, never stored. Pin the term and FINDS
+    returns every customer whose name, legal name, external id or email CONTAINS it, case ignored:
+    a superset, so filter on c.name or c.externalId for the one meant. One call, where a name over
+    the book reads every customer.
+  properties:
+    term:
+      identity: true
+      description: >-
+        The text searched for, as given: an exact name, an external id or a fragment. Matched as a
+        case-insensitive substring over name, legal, first and last name, external id and email.
+  examples:
+    # STEERING — a customer named in a question is found by its search, then by its exact name.
+    - q: "what does Acme Ltd owe us"
+      cypher: |
+        MATCH (s:LagoCustomerSearch {term: 'Acme Ltd'})-[:FINDS]->(c:BillingCustomer)
+        WHERE c.name = 'Acme Ltd'
+        MATCH (c)-[:HAS_INVOICE]->(i:BillingInvoice)
+        WHERE i.paymentStatus <> 'succeeded'
+        RETURN c.name AS customer, i.currency AS currency, count(i) AS unpaidInvoices, sum(i.amountDue) AS owed
 
 - name: LagoCustomer
   visibility: internal
   userAnchor: false
   parents: [BillingCustomer]
   description: >-
-    A customer in Lago: somebody the business invoices, and a BillingCustomer of the business
-    vocabulary. externalId is the id the BUSINESS gave the customer and is what Lago's other
-    listings filter on; id is Lago's own.
+    One customer in Lago: somebody the business invoices; a BillingCustomer. Identity: externalId,
+    the business's id, which every invoice and subscription listing filters on (id is Lago's). By
+    externalId: one call; by name: LagoCustomerSearch. Billed in one currency. customerSince:
+    Lago's record date, not their start.
   properties:
-    id: { identity: true, description: "Lago's own id for the customer (lago_id)." }
-    externalId: "The id the business gave this customer; what invoices and subscriptions are filtered by."
-    name: "The name invoices are made out to."
-    email: "Where invoices are sent."
+    id: { identity: true, description: "Lago's own id for the customer (lago_id). Never empty." }
+    externalId: "The id the BUSINESS gave this customer; its key in Lago, carried by invoices and subscriptions as customerExternalId. Exact: `c.externalId = '…'` is one call."
+    name: "The name invoices are made out to, as typed into Lago. Not unique: two customers can share a name."
+    legalName: "The registered company name, when someone entered one; empty otherwise."
+    customerType: "company or individual; empty when nobody set it, which is most customers."
+    # Not a joinKey: Lago lets this one field hold several addresses, comma-separated, so it is not a key.
+    email: "Where invoices are sent. May hold several addresses separated by commas, so match with CONTAINS, not =."
     # What identifies the COMPANY. Sent as Lago holds it; the spine normalizes.
     url:
       hub: CustomerAccount
-      description: "The customer's website, as typed into Lago. Keys the CustomerAccount spine."
-    currency: "The ISO 4217 currency this customer is billed in."
-    country: "ISO 3166 country code."
-    netPaymentTerm: { type: int, description: "Days the customer has to pay an invoice." }
-    customerSince: "When Lago first knew them (created_at, an ISO timestamp)."
-    slug: "Lago's short reference for the customer, the prefix of its invoice numbers."
-    scopeKey: "Echo of the books scope this customer was fetched under."
+      description: "The customer's website as typed into Lago, any shape. Keys the CustomerAccount spine (accountKey); empty when nobody entered one, and then BILLED_AS cannot reach this customer."
+    currency: "The ISO 4217 code this customer is billed in (GBP, USD, EUR). Every amount on their invoices and subscriptions is in it."
+    country: "ISO 3166-1 alpha-2 country of the billing address (GB, US); empty when no address was entered."
+    timezone: "The IANA time zone Lago bills this customer in (the customer's own, else the organization's): where 'the 1st of the month' is."
+    netPaymentTerm: { type: int, description: "Days after issue an invoice falls due (30 = net 30). Lago's due date is issuedOn plus this." }
+    customerSince: "When the record was created IN LAGO, ISO timestamp UTC (created_at): Lago's clock, not when the relationship began; for a migrated book, the migration day. Lago keeps no start date."
+    slug: "Lago's short reference for the customer; the prefix of its invoice numbers (ACME-001 → ACME-001-002)."
+    scopeKey: "Bookkeeping: the books scope this customer was fetched under. Not a business fact."
+    term: "Bookkeeping: the search term this customer was found by, when reached through LagoCustomerSearch. Not a business fact."
   virtualJoins:
     - { anchorLabel: LagoBooks, relationship: HAS_CUSTOMER, keyField: scope,
         recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000,
-        description: "Every customer on the books." }
+        description: "Every customer on the books. A filter on externalId is sent to Lago (one call); a count is Lago's own total (one call)." }
+    - { anchorLabel: LagoCustomerSearch, relationship: FINDS, keyField: term,
+        recordKeyField: term, producer: lagoCustomersBySearch, maxFanoutTotal: 5000,
+        description: "Customers whose name, legal name, external id or email contains the term, case ignored — a search, so filter on name or externalId for an exact match. One call per term." }
     # The vocabulary's own edge, from the vocabulary's own anchor. recordKeyField is `url` and
     # NOT an echo of the asked key: Lago's search is a substring match, and stamping the asked
     # domain onto whatever it returned would make every stray a match. Read through the spine,
@@ -94,102 +140,159 @@
       cypher: |
         MATCH (a:CustomerAccount)-[:BILLED_AS]->(bc:BillingCustomer)-[:HAS_INVOICE]->(i:BillingInvoice)
         WHERE i.paymentStatus <> 'succeeded'
-        WITH a, count(i) AS unpaidInvoices, sum(i.amountDueCents) / 100.0 AS owed
+        WITH a, i.currency AS currency, count(i) AS unpaidInvoices, sum(i.amountDue) AS owed
         MATCH (a)-[:HAS_CASE]->(c:SupportCase)
         WHERE c.status IN ['open', 'pending']
-        RETURN a.name AS account, unpaidInvoices, owed, count(c) AS openCases
+        RETURN a.name AS account, currency, unpaidInvoices, owed, count(c) AS openCases
+    # STEERING — a customer known by the business's id is one call; never sweep the book for it.
+    - q: "show customer C-1042 and its subscriptions"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)
+        WHERE c.externalId = 'C-1042'
+        OPTIONAL MATCH (c)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)
+        RETURN c.name AS customer, c.currency AS currency, collect(s.product) AS subscriptions
 
 - name: LagoSubscription
   visibility: internal
   userAnchor: false
   parents: [BillingSubscription]
   description: >-
-    Something a customer pays Lago's owner for on a schedule, and a BillingSubscription of the
-    business vocabulary. amountCents is per billing period; how long a period is, and the plan's
-    name, live on the plan: ON_PLAN reaches it (planCode is only its code).
+    A customer on a plan, billed each period; a BillingSubscription. Identified by id; externalId
+    is the business's key. amountCents: base price per ONE period, cents (amount: major units);
+    period length is the plan's interval, via ON_PLAN. status: active bills; pending starts later;
+    terminated ended; canceled never ran.
   properties:
     id: { identity: true, description: "Lago's own id for the subscription (lago_id)." }
-    externalId: "The id the business gave this subscription."
-    customerExternalId: "The customer it belongs to, by the business's id."
-    product: "What is subscribed to, as named on the subscription."
-    planCode: "The plan's code, not its name: ON_PLAN reaches the plan and its name."
-    status: "Lago's own word: active, pending, canceled or terminated. HAS_SUBSCRIPTION reaches active ones only; HAS_ANY_SUBSCRIPTION reaches every status."
-    amountCents: { type: int, description: "Price per billing period in CENTS of `currency`. The same price in major units is `amount`." }
-    currency: "ISO 4217 code."
-    startedOn: "When the subscription began (ISO timestamp)."
+    externalId: "The id the business gave this subscription; exact, and one call to look up."
+    customerExternalId: "The customer it belongs to, by the business's id (LagoCustomer.externalId)."
+    product: "What the subscription is called on its invoices (Lago's subscription name), e.g. 'Business · 38 seats'. Falls back to the plan's name when none was given."
+    planCode: "The plan's code, not its name: ON_PLAN reaches the plan, its name and its interval. Exact; `s.planCode = '…'` is sent to Lago."
+    nextPlanCode: "The plan it is scheduled to move to at the end of this period (a downgrade waits for the period to end); empty when no change is scheduled."
+    status: >-
+      active, pending, incomplete, terminated or canceled. active: billing now; terminated: ran, then
+      ended (churn); canceled: stopped before it started; pending: starts later. HAS_SUBSCRIPTION
+      reaches active ones only; HAS_ANY_SUBSCRIPTION every status. pending also covers a scheduled
+      plan change; incomplete waits on an activation rule such as a first payment; terminatedOn and
+      canceledOn say when.
+    billingTime: "anniversary (each period runs from the start day, e.g. the 22nd to the 21st) or calendar (periods follow calendar months or years)."
+    amountCents: { type: int, description: "The plan's base price for ONE billing period, in CENTS of `currency` (10000 = 100.00). Usage charges and taxes are not in it. In major units: `amount`. Annualize through the plan's interval, never by assuming monthly." }
+    currency: "ISO 4217 code of the plan's price."
+    subscriptionAt: "The start date the subscription was CREATED with (subscription_at, ISO timestamp) — the business's date. For a book migrated into Lago this is the real start, earlier than createdAt."
+    startedOn: "When it actually began billing (started_at, ISO timestamp); empty while pending."
+    periodStartedOn: "When the current billing period began (ISO timestamp)."
     periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp). It renews every period, not once: a monthly subscription renews again a month later, so its renewals in a span of time are every period end inside it, not only this one."
-    terminatedOn: "When it was terminated; empty while it runs."
-    scopeKey: "Echo of the books scope this subscription was fetched under."
+    endingOn: "The date it is set to end on its own (ending_at); empty means it renews until somebody ends it."
+    canceledOn: "When a pending subscription was canceled before it started, ISO timestamp UTC (Lago's clock); empty otherwise."
+    cancellationReason: "Why it was canceled: payment_failed, timeout or manual; empty unless canceled."
+    terminatedOn: "When it was terminated (ended after running), ISO timestamp UTC (Lago's clock); empty while it runs."
+    createdAt: "When the record was created IN LAGO (ISO timestamp) — Lago's clock, which for a migrated book is the migration day."
+    scopeKey: "Bookkeeping: the books scope this subscription was fetched under. Not a business fact."
   virtualJoins:
+    # implicitDoor: with two doors from the books, a bare MATCH (s:BillingSubscription) needs telling
+    # which population it means; it means the subscriptions that bill.
     - { anchorLabel: LagoBooks, relationship: HAS_SUBSCRIPTION, keyField: scope,
         recordKeyField: scopeKey, producer: lagoSubscriptionsAll, maxFanoutTotal: 50000,
-        description: "Every ACTIVE subscription on the books." }
+        implicitDoor: true,
+        description: "Every ACTIVE subscription on the books. Filters on customerExternalId, externalId, planCode and currency are sent to Lago; a count is Lago's own total (one call)." }
     # Every status, for churn and cancellation questions: the active door above stays the one billing views read.
     - { anchorLabel: LagoBooks, relationship: HAS_ANY_SUBSCRIPTION, keyField: scope,
         recordKeyField: scopeKey, producer: lagoSubscriptionsAnyStatus, maxFanoutTotal: 50000,
-        description: "Every subscription on the books, whatever its status: active, pending, canceled or terminated." }
+        description: "Every subscription on the books, whatever its status. A filter on status (= or IN), customerExternalId, externalId, planCode or currency is sent to Lago; a count is one call." }
     # materializedKeyField: once the books' subscriptions are swept, a customer's subscriptions are
     # the swept records whose customerExternalId is its externalId — no fetch per customer.
     - { anchorLabel: LagoCustomer, relationship: HAS_SUBSCRIPTION, keyField: externalId,
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
         materializedKeyField: customerExternalId,
-        description: "A customer's ACTIVE subscriptions." }
+        description: "A customer's ACTIVE subscriptions: one call per customer." }
+    - { anchorLabel: LagoCustomer, relationship: HAS_ANY_SUBSCRIPTION, keyField: externalId,
+        recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomerAnyStatus,
+        description: "A customer's subscriptions in every status — what they had, and when it ended: one call per customer." }
+  examples:
+    # STEERING — churn is TERMINATED, reached through HAS_ANY_SUBSCRIPTION; the plain edge is active only.
+    - q: "which subscriptions ended this year"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_ANY_SUBSCRIPTION]->(s:BillingSubscription)
+        WHERE s.status = 'terminated' AND s.terminatedOn >= '2026-01-01'
+        RETURN s.customerExternalId AS customer, s.product AS product, s.terminatedOn AS ended
+        ORDER BY ended DESC
+    # STEERING — a yearly figure needs the plan's interval. Never multiply by 12 blind.
+    - q: "annual recurring revenue by currency"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:BillingPlan)
+        MATCH (b)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p)
+        WITH s, CASE p.interval WHEN 'weekly' THEN 52 WHEN 'monthly' THEN 12 WHEN 'quarterly' THEN 4
+                              WHEN 'semiannual' THEN 2 WHEN 'yearly' THEN 1 END AS periodsPerYear
+        RETURN s.currency AS currency, sum(s.amount * periodsPerYear) AS annualRecurring, count(s) AS subscriptions
 
 - name: LagoPlan
   visibility: internal
   userAnchor: false
   parents: [BillingPlan]
   description: >-
-    A plan in Lago, and a BillingPlan of the business vocabulary: the name people use for what a
-    subscription is on, its base price and how often it bills. Reached from a subscription by
-    ON_PLAN, or every plan from the books by HAS_PLAN.
+    One plan in Lago: what a subscription is on; a BillingPlan. Identified by id (Lago's); code is
+    what a subscription's planCode names. The name people use, the base price per period in cents
+    (amount: major units) and the interval: weekly, monthly, quarterly, semiannual or yearly. By
+    ON_PLAN; all by HAS_PLAN.
   properties:
     id: { identity: true, description: "Lago's own id for the plan (lago_id)." }
-    code: "The plan's code; what a subscription's planCode names."
-    name: "The plan's name, as people say it."
-    interval: "How often it bills, in Lago's word: weekly, monthly, quarterly, semiannual or yearly."
-    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency`. In major units: `amount`." }
+    code: "The plan's code; unique in the organization, and what a subscription's planCode names."
+    name: "The plan's name, as people say it. Several plans can share a name at different prices (one name at two prices)."
+    description: "Free text someone wrote about the plan; often empty."
+    interval: "How long one billing period is, in Lago's word: weekly, monthly, quarterly (3 months), semiannual (6 months) or yearly. Periods per year: 52, 12, 4, 2, 1."
+    payInAdvance: { type: boolean, description: "True: the base price is invoiced at the START of each period. False: at its end (in arrears), so a new subscription first bills a period after it starts." }
+    trialPeriodDays: { type: float, description: "Free days before the first period bills; 0 or empty for none." }
+    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency` (10000 = 100.00). In major units: `amount`. Empty for a plan priced only through usage charges." }
     amount: { type: float, description: "Base price per billing period, in major units of `currency`." }
-    currency: "ISO 4217 code."
-    scopeKey: "Echo of the books scope this plan was fetched under."
+    currency: "ISO 4217 code of the price."
+    createdAt: "When the plan was created in Lago (ISO timestamp)."
+    scopeKey: "Bookkeeping: the books scope this plan was fetched under. Not a business fact."
   virtualJoins:
     - { anchorLabel: LagoBooks, relationship: HAS_PLAN, keyField: scope,
         recordKeyField: scopeKey, producer: lagoPlansAll, maxFanoutTotal: 5000,
-        description: "Every plan on the books." }
+        description: "Every plan on the books: one call." }
     # materializedKeyField: once the books' plans are swept, a subscription's plan is the swept plan
     # whose code is its planCode — thousands of subscriptions on a handful of plans need no fetch each.
     - { anchorLabel: LagoSubscription, relationship: ON_PLAN, keyField: planCode,
         recordKeyField: code, producer: lagoPlanByCode, materializedKeyField: code,
-        description: "The plan a subscription is on: its name and billing interval." }
+        description: "The plan a subscription is on: its name and billing interval. Free when the books' plans were read in the same query, else one call per distinct plan." }
 
 - name: LagoInvoice
   visibility: internal
   userAnchor: false
   parents: [BillingInvoice]
   description: >-
-    A bill Lago issued, and a BillingInvoice of the business vocabulary. paymentStatus is the
-    fact to reason from. Amounts are CENTS. Every invoice here is FINALIZED — the producers ask Lago for
-    nothing else, because a draft is not a bill — so the document's own state is not exposed: as a
-    property it carried no information, and a generated query kept mistaking it for payment.
+    One finalized bill in Lago (no drafts or voids); a BillingInvoice. Identity: id; people say
+    number. paymentStatus is the fact: pending (unpaid), succeeded (paid), failed (collection
+    failed). Money in cents of currency; amount, amountDue in major units. issuedOn is Lago's date;
+    a migrated book's own: metadata 'dates'.
   properties:
     id: { identity: true, description: "Lago's own id for the invoice (lago_id)." }
-    number: "The invoice number printed on it."
-    customerExternalId: "The customer billed, by the business's id."
-    customerName: "The customer billed."
+    number: "The invoice number printed on it (slug-sequence, e.g. ACME-001-002). Unique; not sent to Lago as a filter."
+    customerExternalId: "The customer billed, by the business's id. `i.customerExternalId = '…'` is sent to Lago: one call."
+    customerName: "The customer billed, by name, as Lago held it when this was read."
     customerUrl: "The billed customer's website, as Lago holds it."
-    paymentStatus: "pending, succeeded or failed. Failed means collection was tried and did not work."
-    overdue: { type: boolean, description: "True once Lago's due date has passed with the invoice unpaid." }
-    disputeLostOn: "When the customer disputed the payment with their bank and won; empty otherwise."
-    amountCents: { type: int, description: "Total billed, in CENTS of `currency`; in major units it is `amount`. Invoices can be in different currencies: sum per currency (group by `currency`), never across them." }
-    amountPaidCents: { type: int, description: "How much has been received, in CENTS; in major units it is `amountPaid`." }
-    amountDueCents: { type: int, description: "What is still owed, in CENTS; in major units it is `amountDue`." }
-    amountDue: { type: float, description: "What is still owed, in major units of `currency`." }
-    currency: "ISO 4217 code."
-    issuedOn: "The day Lago issued it."
-    dueOn: "The day payment is due."
-    invoiceType: "subscription, one_off, add_on, credit or advance_charges."
-    sourceUrl: "Opens this invoice in Lago."
-    scopeKey: "Echo of the books scope this invoice was fetched under."
+    paymentStatus: >-
+      pending, succeeded or failed. Unpaid = pending or failed; succeeded = paid in full; failed =
+      collection was tried and did not work. An equality is sent to Lago. pending is where every
+      invoice starts, and stays until someone marks it paid or a collection fails.
+    overdue: { type: boolean, description: "True once Lago's due date (dueOn) has passed with it unpaid; Lago's clock, so a migrated invoice is not overdue here until Lago's own due date, whatever its book said." }
+    disputeLostOn: "When the customer disputed the payment with their bank and won (ISO timestamp); empty when no dispute was lost."
+    amountCents: { type: int, description: "Total billed incl. tax, in CENTS (minor units) of `currency`: 10000 = 100.00; major units: `amount`. Sum per currency, never across. Range filters (>=, <=) are sent to Lago." }
+    amountPaidCents: { type: int, description: "How much has been received, in CENTS; in major units `amountPaid`. A succeeded invoice counts as paid in full; open-source Lago records no partial payments, so a pending or failed one reads 0." }
+    amountDueCents: { type: int, description: "What is still owed, in CENTS; 0 once succeeded. In major units `amountDue`." }
+    amountDue: { type: float, description: "What is still owed, in major units of `currency`; 0 once succeeded." }
+    taxAmountCents: { type: int, description: "The tax inside amountCents, in CENTS; 0 when no tax applies." }
+    currency: "ISO 4217 code every amount on this invoice is in. An equality is sent to Lago."
+    issuedOn: >-
+      The day Lago issued it, YYYY-MM-DD: LAGO'S clock. For an invoice migrated from another system
+      that is the load day; its real issue date is `issued=` in its `dates` metadata. Lago's own
+      subscription invoices carry their billing day. Bare-date bounds (>=, <=, =) are sent to Lago.
+    dueOn: "The day payment is due by Lago's reckoning: issuedOn plus netPaymentTerm. Lago's clock, like issuedOn; a migrated book's own due date is the `due=` part of its `dates` metadata."
+    netPaymentTerm: { type: int, description: "Days between issue and due date on this invoice." }
+    createdAt: "When Lago created the record (ISO timestamp, UTC). Lago's clock."
+    invoiceType: "subscription, one_off, add_on, credit, advance_charges or progressive_billing. subscription: one period of a subscription; one_off: raised by hand or API; credit: wallet credits bought. Sent to Lago."
+    sourceUrl: "Opens this invoice in Lago's UI."
+    scopeKey: "Bookkeeping: the books scope this invoice was fetched under. Not a business fact."
   virtualJoins:
     - anchorLabel: LagoBooks
       relationship: HAS_INVOICE
@@ -197,7 +300,10 @@
       recordKeyField: scopeKey
       producer: lagoInvoicesAll
       maxFanoutTotal: 50000
-      description: "Every invoice on the books."
+      description: >-
+        Every finalized invoice on the books, newest issued first. Sent to Lago when the query
+        filters on them: customerExternalId, paymentStatus (=), currency, invoiceType, overdue,
+        disputeLost (= true), issuedOn (bare-date >=, <=, =) and amountCents (>=, <=).
       brings:
         - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
     - anchorLabel: LagoCustomer
@@ -208,19 +314,19 @@
       # customerExternalId is its externalId — no fetch per customer (embabel/me#1489).
       materializedKeyField: customerExternalId
       producer: lagoInvoicesByCustomer
-      description: "A customer's invoices."
+      description: "A customer's finalized invoices, newest issued first: one call per customer, shared by every question about them."
       brings:
         - { childType: LagoInvoiceMetadata, relationship: HAS_METADATA, records: "$.metadata[*]", id: lago_id }
 
   examples:
-    # STEERING — "unpaid", "owes", "outstanding" are about PAYMENT: paymentStatus, never
-    # documentStatus. And money is CENTS: divide.
+    # STEERING — "unpaid", "owes", "outstanding" are about PAYMENT: paymentStatus. Money is per
+    # currency, in major units through amountDue.
     - q: "which customers have unpaid invoices"
       cypher: |
         MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
         WHERE i.paymentStatus <> 'succeeded'
-        RETURN i.customerName AS customer, count(i) AS unpaidInvoices,
-               sum(i.amountDueCents) / 100.0 AS owed, i.currency AS currency
+        RETURN i.customerName AS customer, i.currency AS currency, count(i) AS unpaidInvoices,
+               sum(i.amountDue) AS owed
         ORDER BY owed DESC
     # STEERING — "owes the MOST" is the largest AMOUNT, never the most invoices. A generated
     # query counted invoices, ranked five customers with one invoice each in arbitrary order,
@@ -229,18 +335,37 @@
       cypher: |
         MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
         WHERE i.paymentStatus <> 'succeeded'
-        RETURN i.customerName AS customer, sum(i.amountDueCents) / 100.0 AS owed,
-               i.currency AS currency, count(i) AS unpaidInvoices
+        RETURN i.customerName AS customer, i.currency AS currency, sum(i.amountDue) AS owed,
+               count(i) AS unpaidInvoices
         ORDER BY owed DESC
+    # STEERING — a window on issuedOn written as bare dates is sent to Lago; both bounds inclusive.
+    - q: "how much did we invoice in October 2026"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+        WHERE i.issuedOn >= '2026-10-01' AND i.issuedOn <= '2026-10-31'
+        RETURN i.currency AS currency, count(i) AS invoices, sum(i.amount) AS invoiced
+    # STEERING — the business's own dates for a migrated invoice are in its `dates` metadata, not issuedOn.
+    - q: "when was invoice INV-1001 really issued and paid"
+      cypher: |
+        MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)-[:HAS_METADATA]->(m:LagoInvoiceMetadata)
+        WHERE m.key = 'source' AND m.value CONTAINS '|INV-1001|'
+        MATCH (i)-[:HAS_METADATA]->(d:LagoInvoiceMetadata {key: 'dates'})
+        RETURN i.number AS lagoNumber, i.issuedOn AS issuedInLago, d.value AS businessDates
 
 - name: LagoInvoiceMetadata
   visibility: internal
   userAnchor: false
   description: >-
-    One key/value a business attached to an invoice. Lago gives these no meaning; whoever wrote
-    them did. It is where a business not connected to a payment processor keeps what Lago
-    would otherwise record for it — collection attempts, the dates on its own books.
+    One key/value pair a business attached to an invoice (at most five); Lago gives them no
+    meaning. Reached by HAS_METADATA, brought with the invoice at no extra call. Where a business
+    with no payment processor keeps what Lago cannot: its own dates, payment attempts, refunds,
+    disputes. Lago's own invoices have none.
   properties:
     lago_id: { identity: true, description: "Lago's id for the entry." }
-    key: "The entry's name."
-    value: "The entry's value, as text."
+    key: >-
+      The entry's name, at most 20 characters. Book-loaded invoices carry: source, dates
+      (issued=…;due=…;paid=…, the BUSINESS'S clock), attempt_1…, refund, dispute. Written by
+      seed/load_book.py: source is book id|book number|book status; dates has paid empty while
+      unpaid; attempt_N is payment id;date;status;method;failure code. Another business's keys are
+      its own.
+    value: "The entry's value, as TEXT (at most ~100 characters); not a number or money. An amount written inside it carries its own currency (refund: id;date;amount CUR;reason). Parse with split()."

@@ -4,127 +4,306 @@
 # names carry the prefix because view names resolve globally, and a second billing realm would
 # otherwise silently answer for this one.
 #
-# Money leaves here in MAJOR units: Lago speaks cents, and the views are where that is put right.
-# Every invoice row carries `sourceUrl`, which opens the invoice in Lago.
+# Money leaves here in MAJOR units of the row's `currency`: Lago speaks cents, and the views are
+# where that is put right. Every invoice row carries `sourceUrl`, which opens the invoice in Lago.
+#
+# PARAMS. A name matches EXACTLY unless the caller opts into `customerMatch: contains`. Optional
+# filters are written `($p = '' OR x.prop = $p)`: the engine reads a spliced parameter as a
+# constant, so an empty one drops the filter and a set one is the plain predicate, which is sent to
+# Lago wherever a rule covers it (producers/lago.yml says which).
+#
+# COST. A view over one customer reads that customer (two calls: the search, then their invoices).
+# A view over the books reads the whole book once per cache window unless its filters narrow it.
 
 - name: LagoUnpaidInvoices
   description: >-
-    Every bill that has been issued and not yet collected, largest first: payment pending, or
-    tried and FAILED. THE answer for "who owes us money", "unpaid invoices", "failed payments"
-    (via paymentStatus = failed) and "what does <customer> owe" (via customer, a name fragment).
-    NOT an answer to anything about RETRIES or ATTEMPTS — how many times a payment was tried is
-    not recorded here, and "failed" is not "retried". NOT an answer to a question that also
-    mentions support cases, deals or the CRM: billing alone cannot see those.
+    Unpaid invoices (pending or failed) across the whole book, largest first. Payment pending, or
+    tried and FAILED. THE answer for "who owes us money", "unpaid invoices", "failed payments" (paymentStatus =
+    failed) and "unpaid invoices in GBP / issued in a window". For ONE customer use
+    LagoCustomerInvoices, which reads only theirs. NOT about RETRIES or ATTEMPTS — "failed" is not
+    "retried". NOT for a question that also mentions support cases, deals or the CRM.
   outputLabel: UnpaidInvoiceRow
   params:
     paymentStatus:
       type: string
       default: ""
-      description: "Only this payment status: pending or failed. Empty = both."
+      description: "Only this payment status: pending or failed (sent to Lago). Empty = both. Any other value matches nothing."
     customer:
       type: string
       default: ""
-      description: "Only customers whose name contains this. Empty = every customer."
+      description: "Only this customer: their exact name, or their exact external id. Empty = every customer. Reads the whole unpaid book; for one customer LagoCustomerInvoices is cheaper."
+    customerMatch:
+      type: string
+      default: "exact"
+      description: "How `customer` matches the name: exact (the default) or contains (case-insensitive substring — opt in only when the caller gave a fragment)."
+    currency:
+      type: string
+      default: ""
+      description: "Only invoices in this ISO 4217 currency, e.g. GBP (sent to Lago). Empty = every currency."
+    issuedFrom:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or after this day, YYYY-MM-DD (sent to Lago). Lago's issue date, not a migrated book's own. Empty = no lower bound."
+    issuedTo:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or before this day, YYYY-MM-DD, inclusive (sent to Lago). Empty = no upper bound."
     limit:
       type: int
       default: 100
       description: "Maximum invoices."
   cypher: |
     MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
-    // Optional filters test plain VARIABLES after a WITH. Written against the node, the engine
-    // lifts the equality out of the OR and an empty parameter filters out every row.
-    WITH i, i.paymentStatus AS paid, toLower(i.customerName) AS who
-    WHERE paid <> 'succeeded'
-      AND ($paymentStatus = '' OR paid = $paymentStatus)
-      AND ($customer = '' OR who CONTAINS toLower($customer))
-    RETURN i.number AS invoice, i.customerName AS customer, i.customerUrl AS customerUrl,
-           i.paymentStatus AS paymentStatus, i.overdue AS overdue,
-           i.amountDueCents / 100.0 AS amountDue, i.currency AS currency,
+    WHERE i.paymentStatus <> 'succeeded'
+      AND ($paymentStatus = '' OR i.paymentStatus = $paymentStatus)
+      AND ($currency = '' OR i.currency = $currency)
+      AND ($issuedFrom = '' OR i.issuedOn >= $issuedFrom)
+      AND ($issuedTo = '' OR i.issuedOn <= $issuedTo)
+      AND ($customer = ''
+           OR i.customerName = $customer OR i.customerExternalId = $customer
+           OR ($customerMatch = 'contains' AND toLower(i.customerName) CONTAINS toLower($customer)))
+    RETURN i.number AS invoice, i.customerName AS customer, i.customerExternalId AS customerExternalId,
+           i.customerUrl AS customerUrl, i.paymentStatus AS paymentStatus, i.overdue AS overdue,
+           i.amountDue AS amountDue, i.currency AS currency,
            i.issuedOn AS issuedOn, i.dueOn AS dueOn, i.sourceUrl AS sourceUrl
-    ORDER BY i.amountDueCents DESC
+    ORDER BY amountDue DESC
+    LIMIT $limit
+
+- name: LagoCustomerInvoices
+  description: >-
+    One customer's invoices, by exact name or external id, newest first. Two source calls
+    whatever the size of the book. THE answer for "what does <customer> owe",
+    "show <customer>'s invoices", "<customer>'s last invoice", "has <customer> paid". paymentStatus
+    'unpaid' means pending or failed. Several customers can share a name: the customer columns say
+    which. issuedOn is Lago's issue date.
+  outputLabel: CustomerInvoiceRow
+  params:
+    customer:
+      type: string
+      required: true
+      description: "The customer: their exact name as invoices are made out to them, or their exact external id. Required."
+    customerMatch:
+      type: string
+      default: "exact"
+      description: "How `customer` matches the name: exact (the default) or contains (case-insensitive substring over the name — opt in only for a fragment, and expect several customers)."
+    paymentStatus:
+      type: string
+      default: ""
+      description: "Only this payment status: pending, succeeded, failed, or unpaid (pending or failed). Empty = every invoice."
+    issuedFrom:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or after this day, YYYY-MM-DD. Empty = no lower bound."
+    issuedTo:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or before this day, YYYY-MM-DD, inclusive. Empty = no upper bound."
+    limit:
+      type: int
+      default: 200
+      description: "Maximum invoices."
+  # The search finds a superset (substring, case ignored, over names, external id and email), so
+  # the WHERE says which customer is meant; their invoices are then one call, read whole and shared.
+  cypher: |
+    MATCH (s:LagoCustomerSearch {term: $customer})-[:FINDS]->(c:BillingCustomer)
+    WHERE c.name = $customer OR c.externalId = $customer
+       OR ($customerMatch = 'contains' AND toLower(c.name) CONTAINS toLower($customer))
+    MATCH (c)-[:HAS_INVOICE]->(i:BillingInvoice)
+    WHERE ($paymentStatus = ''
+           OR i.paymentStatus = $paymentStatus
+           OR ($paymentStatus = 'unpaid' AND i.paymentStatus <> 'succeeded'))
+      AND ($issuedFrom = '' OR i.issuedOn >= $issuedFrom)
+      AND ($issuedTo = '' OR i.issuedOn <= $issuedTo)
+    RETURN c.name AS customer, c.externalId AS customerExternalId, i.number AS invoice,
+           i.paymentStatus AS paymentStatus, i.overdue AS overdue, i.amount AS amount,
+           i.amountDue AS amountDue, i.currency AS currency, i.invoiceType AS invoiceType,
+           i.issuedOn AS issuedOn, i.dueOn AS dueOn, i.sourceUrl AS sourceUrl
+    ORDER BY issuedOn DESC, invoice DESC
+    LIMIT $limit
+
+- name: LagoInvoicesIssued
+  description: >-
+    Invoices Lago issued between two days, inclusive, newest first. The window, currency,
+    payment status and type are all sent to Lago, so a month costs that month's pages. THE answer
+    for "invoices issued in October", "what did we bill last week", "failed invoices this quarter".
+    The dates are LAGO'S issue dates; an invoice migrated from another system carries its own in
+    metadata (see LagoInvoiceMetadata).
+  outputLabel: IssuedInvoiceRow
+  params:
+    issuedFrom:
+      type: string
+      required: true
+      description: "First day of the window, YYYY-MM-DD. Required."
+    issuedTo:
+      type: string
+      required: true
+      description: "Last day of the window, YYYY-MM-DD, inclusive. Required; the same day as issuedFrom for one day."
+    paymentStatus:
+      type: string
+      default: ""
+      description: "Only this payment status: pending, succeeded or failed (sent to Lago). Empty = all."
+    currency:
+      type: string
+      default: ""
+      description: "Only this ISO 4217 currency (sent to Lago). Empty = all."
+    invoiceType:
+      type: string
+      default: ""
+      description: "Only this kind: subscription, one_off, add_on, credit, advance_charges or progressive_billing (sent to Lago). Empty = all."
+    limit:
+      type: int
+      default: 500
+      description: "Maximum invoices."
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+    WHERE i.issuedOn >= $issuedFrom AND i.issuedOn <= $issuedTo
+      AND ($paymentStatus = '' OR i.paymentStatus = $paymentStatus)
+      AND ($currency = '' OR i.currency = $currency)
+      AND ($invoiceType = '' OR i.invoiceType = $invoiceType)
+    RETURN i.number AS invoice, i.customerName AS customer, i.customerExternalId AS customerExternalId,
+           i.invoiceType AS invoiceType, i.paymentStatus AS paymentStatus, i.amount AS amount,
+           i.amountDue AS amountDue, i.currency AS currency, i.issuedOn AS issuedOn, i.dueOn AS dueOn,
+           i.sourceUrl AS sourceUrl
+    ORDER BY issuedOn DESC, invoice DESC
     LIMIT $limit
 
 - name: LagoReceivablesByCustomer
   description: >-
-    What each customer owes, most first: unpaid invoices counted and summed per customer, with
-    how many of them have FAILED collection. THE answer for "which customers owe the most" and
-    "who has failed payments". A customer absent from this list owes nothing — that is an answer.
-    Billing ONLY: a question that also mentions support cases, deals or the CRM is an
+    What each customer owes, most first, per currency. Unpaid invoices counted and summed per
+    customer and currency, with how many of them have FAILED collection. THE answer for "which customers owe the
+    most" and "who has failed payments". A customer absent from this list owes nothing — that is an
+    answer. Billing ONLY: a question that also mentions support cases, deals or the CRM is an
     account-level question and this view would silently drop that half of it.
   outputLabel: CustomerReceivableRow
   params:
+    currency:
+      type: string
+      default: ""
+      description: "Only this ISO 4217 currency (sent to Lago). Empty = every currency, one row per customer and currency."
     limit:
       type: int
       default: 50
-      description: "Maximum customers."
+      description: "Maximum rows."
   cypher: |
     MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
     WHERE i.paymentStatus <> 'succeeded'
-    RETURN i.customerName AS customer, i.customerUrl AS customerUrl, i.currency AS currency,
+      AND ($currency = '' OR i.currency = $currency)
+    RETURN i.customerName AS customer, i.customerExternalId AS customerExternalId,
+           i.customerUrl AS customerUrl, i.currency AS currency,
            count(i) AS unpaidInvoices,
            sum(CASE WHEN i.paymentStatus = 'failed' THEN 1 ELSE 0 END) AS failedInvoices,
-           sum(i.amountDueCents) / 100.0 AS amountDue
+           sum(i.amountDue) AS amountDue
     ORDER BY amountDue DESC
     LIMIT $limit
 
 - name: LagoRecurringRevenue
   description: >-
-    What each customer pays on a schedule: their ACTIVE subscriptions counted and summed per
-    billing period, largest first. THE answer for "who are our biggest customers", "how much
-    recurring revenue is at stake with <customer>" and "what is <customer> subscribed to".
-    Amounts are per billing period as the plan defines it; the subscription does not say how long
-    that is — its plan does (`(s)-[:ON_PLAN]->(p:LagoPlan)`, `p.interval`). Do not annualize
-    without it. Billing ONLY: for revenue
-    "behind open support cases", "at risk" or tied to deals, this view would silently drop the
-    condition — that is an account-level question.
+    Annual recurring revenue per customer and currency, largest first. Their ACTIVE subscriptions,
+    annualized through each plan's interval (monthly x12, quarterly x4, semiannual x2, weekly x52,
+    yearly x1). THE answer for "who are our biggest customers", "ARR by customer",
+    "how much recurring revenue is at stake with <customer>". Base plan prices only: usage charges
+    and taxes are not in it. Billing ONLY — not for revenue tied to support cases or deals.
   outputLabel: CustomerRecurringRow
-  # The books' subscriptions are swept FIRST, so each customer's are linked by
-  # customerExternalId (HAS_SUBSCRIPTION's materializedKeyField) instead of one fetch per
-  # customer, which is refused above 200 customers (embabel/me#1489).
+  # One path, customers first: their subscriptions ride the swept books by customerExternalId (HAS_SUBSCRIPTION's
+  # materializedKeyField) rather than one fetch per customer, refused above 200 (embabel/me#1489), and each
+  # subscription's plan is one lookup per distinct plan code, cached an hour. Matching the plans, the
+  # subscriptions and the customers as three separate sets and joining them exceeded the engine's match budget
+  # at 3,356 customers.
   params:
     limit:
       type: int
       default: 50
-      description: "Maximum customers."
+      description: "Maximum rows."
   cypher: |
-    MATCH (b:LagoBooks)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)
-    WHERE s.status = 'active'
-    MATCH (c:BillingCustomer)-[:HAS_SUBSCRIPTION]->(s)
-    RETURN c.name AS customer, c.url AS customerUrl, s.currency AS currency,
-           count(s) AS activeSubscriptions, collect(s.product) AS products,
-           sum(s.amountCents) / 100.0 AS perPeriod, min(s.periodEndsOn) AS nextRenewal
-    ORDER BY perPeriod DESC
+    MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p:BillingPlan)
+    WITH c, s, p,
+         CASE p.interval WHEN 'weekly' THEN 52 WHEN 'monthly' THEN 12 WHEN 'quarterly' THEN 4
+                         WHEN 'semiannual' THEN 2 WHEN 'yearly' THEN 1 END AS periodsPerYear
+    RETURN c.name AS customer, c.externalId AS customerExternalId, c.url AS customerUrl,
+           s.currency AS currency, count(s) AS activeSubscriptions,
+           collect(DISTINCT p.name) AS plans,
+           sum(s.amount * periodsPerYear) AS annualRecurring,
+           sum(s.amount * periodsPerYear) / 12.0 AS monthlyRecurring,
+           sum(CASE WHEN periodsPerYear IS NULL THEN 1 ELSE 0 END) AS notAnnualized,
+           min(s.periodEndsOn) AS nextRenewal
+    ORDER BY annualRecurring DESC
+    LIMIT $limit
+
+- name: LagoSubscriptionsByStatus
+  description: >-
+    Subscriptions in one status, most recently ended or started first. THE answer for "which
+    subscriptions were terminated / churned" (status terminated), "what starts soon" (pending),
+    "canceled before they started" (canceled). The status is sent to Lago, so only that status is
+    read. Rows name the customer by external id; LagoCustomerInvoices or HAS_CUSTOMER by externalId
+    gives the name.
+  outputLabel: SubscriptionStatusRow
+  params:
+    status:
+      type: string
+      default: "terminated"
+      description: "Lago's status word, exactly: active, pending, incomplete, terminated (ran, then ended — churn) or canceled (stopped before it started)."
+    limit:
+      type: int
+      default: 200
+      description: "Maximum subscriptions."
+  cypher: |
+    MATCH (b:LagoBooks)-[:HAS_ANY_SUBSCRIPTION]->(s:BillingSubscription)
+    WHERE s.status = $status
+    RETURN s.customerExternalId AS customerExternalId, s.externalId AS subscription,
+           s.product AS product, s.planCode AS planCode, s.status AS status,
+           s.amount AS amountPerPeriod, s.currency AS currency, s.subscriptionAt AS subscriptionAt,
+           s.startedOn AS startedOn, s.terminatedOn AS terminatedOn, s.canceledOn AS canceledOn,
+           s.cancellationReason AS cancellationReason
+    ORDER BY coalesce(terminatedOn, canceledOn, startedOn, subscriptionAt) DESC
     LIMIT $limit
 
 - name: LagoPaymentStatusCounts
   description: >-
-    How many issued invoices are in each payment status, and what they total, per currency.
-    THE answer for "how is collection going" and the figure to reconcile this realm against
-    Lago with. Totals are never added across currencies: one row per status and currency.
+    Invoice counts and totals per payment status and currency. Optionally within a window of
+    Lago's issue dates. THE answer for "how is collection going" and
+    the figure to reconcile this realm against Lago with. Totals are never added across currencies:
+    one row per status and currency.
   outputLabel: PaymentStatusCountRow
+  params:
+    issuedFrom:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or after this day, YYYY-MM-DD (sent to Lago). Empty = from the start."
+    issuedTo:
+      type: string
+      default: ""
+      description: "Only invoices Lago issued on or before this day, YYYY-MM-DD, inclusive (sent to Lago). Empty = to date."
+    currency:
+      type: string
+      default: ""
+      description: "Only this ISO 4217 currency (sent to Lago). Empty = every currency."
   cypher: |
     MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice)
+    WHERE ($issuedFrom = '' OR i.issuedOn >= $issuedFrom)
+      AND ($issuedTo = '' OR i.issuedOn <= $issuedTo)
+      AND ($currency = '' OR i.currency = $currency)
     RETURN i.paymentStatus AS paymentStatus, i.currency AS currency, count(i) AS invoices,
-           sum(i.amountCents) / 100.0 AS total
+           sum(i.amount) AS totalAmount, sum(i.amountDue) AS amountDue
     ORDER BY invoices DESC
 
 - name: LagoCustomers
   description: >-
-    Everybody billing invoices: name, website, billing email, currency and since when. THE
-    answer for "who are our billing customers". Reading it also keys every one of them to the
-    business vocabulary's CustomerAccount, which is how an account-level surface comes to know
-    about a customer only billing has heard of.
+    Every billing customer: name, external id, website, email, currency, country. Also when Lago
+    got the record. THE answer for "who are our billing customers". Reading it also keys
+    every one of them to the business vocabulary's CustomerAccount, which is how an account-level
+    surface comes to know about a customer only billing has heard of.
   outputLabel: LagoCustomerRow
   cypher: |
     MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)
-    RETURN c.name AS customer, c.url AS website, c.email AS email, c.currency AS currency,
-           c.customerSince AS since
+    RETURN c.name AS customer, c.externalId AS customerExternalId, c.url AS website,
+           c.email AS email, c.currency AS currency, c.country AS country,
+           c.customerSince AS inLagoSince
     ORDER BY customer
 
 - name: LagoPlanMix
   description: >-
-    Which plans customers are on: one row per plan with its name, code, billing interval and base
-    price, and how many ACTIVE subscriptions and distinct customers are on it, most first. THE
+    Plans by number of active subscriptions and customers, most first. One row per plan with its
+    name, code, billing interval and base price. THE
     answer for "what plans do customers have", "which plan is most popular", "how many customers
     are on <plan>". Plans nobody is on are listed with zero.
   outputLabel: PlanMixRow
@@ -134,6 +313,7 @@
     MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:LagoPlan)
     OPTIONAL MATCH (b)-[:HAS_SUBSCRIPTION]->(s:LagoSubscription)-[:ON_PLAN]->(p)
     RETURN p.name AS plan, p.code AS code, p.interval AS interval, p.amount AS basePrice,
-           p.currency AS currency, count(s) AS activeSubscriptions,
+           p.currency AS currency, p.payInAdvance AS billedInAdvance,
+           count(s) AS activeSubscriptions,
            count(DISTINCT s.customerExternalId) AS customers
     ORDER BY activeSubscriptions DESC, plan

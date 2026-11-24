@@ -7,7 +7,7 @@ description: >-
   CustomerAccount spine by its url, which is how an account the CRM knows reaches what
   billing knows about it. Every type is virtual: nothing is mirrored, and a change made in
   Lago's own UI is what the next query sees.
-version: 0.1.4
+version: 0.2.0
 # Works and reconciles against Lago; the realms that make it useful are still being built, and
 # part of the vocabulary's contract cannot be met yet (see the README).
 maturity: experimental

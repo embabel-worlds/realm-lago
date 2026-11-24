@@ -3,7 +3,7 @@
  "info": {
   "title": "Lago API (curated)",
   "version": "1.0",
-  "description": "The three Lago operations realm-lago's producers use. Every filter described here was called against Lago v1.53 and its effect counted; a parameter Lago accepts and ignores is not listed as though it narrowed."
+  "description": "The Lago operations realm-lago's producers and methods use. Every filter described here was read in getlago/api v1.53.0's source and then called against a running Lago with and without it, and its effect counted; a parameter Lago accepts and ignores is not listed as though it narrowed."
  },
  "servers": [
   {
@@ -44,7 +44,7 @@
       "schema": {
        "type": "integer"
       },
-      "description": "Page size. 100 is accepted."
+      "description": "Page size. 200 is the largest every Lago release accepts: v1.53 takes any size, and later releases answer more than 200 with a 422 unless the operator raised LAGO_API_PAGINATION_MAX_PAGE_SIZE."
      },
      {
       "name": "search_term",
@@ -53,6 +53,14 @@
        "type": "string"
       },
       "description": "SUBSTRING match over name, external id and email (verified: `bluth.com` finds Bluth Company by its billing email). It is a search, not a key: `stark.com` would also return `notstark.com`. A caller that needs the exact customer must check what came back."
+     },
+     {
+      "name": "external_id",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only the customer with this external id (the business's id for them). One record or none."
      }
     ],
     "responses": {
@@ -88,7 +96,7 @@
       "schema": {
        "type": "integer"
       },
-      "description": "Page size. 100 is accepted."
+      "description": "Page size. 200 is the largest every Lago release accepts: v1.53 takes any size, and later releases answer more than 200 with a 422 unless the operator raised LAGO_API_PAGINATION_MAX_PAGE_SIZE."
      },
      {
       "name": "external_customer_id",
@@ -109,7 +117,7 @@
         "failed"
        ]
       },
-      "description": "pending, succeeded or failed. Narrows at the source (verified: failed 1 of 49)."
+      "description": "pending, succeeded or failed: one value, EXACT. Any other value is a 422. Lago also takes `payment_status[]` for several, but caches the list's total_count under a key that leaves the array out, so a page walk planned from it is wrong; this realm does not send it."
      },
      {
       "name": "payment_overdue",
@@ -125,7 +133,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "draft, finalized, voided, failed or pending. A draft is not yet a bill."
+      "description": "draft, finalized, voided, failed or pending. A draft is not yet a bill; the realm asks for finalized."
      },
      {
       "name": "issuing_date_from",
@@ -133,7 +141,7 @@
       "schema": {
        "type": "string"
       },
-      "description": "Only invoices issued on or after this day (YYYY-MM-DD), inclusive. Narrows at the source."
+      "description": "Only invoices issued on or after this day (YYYY-MM-DD), inclusive. Lago's issuing_date, which is a date with no time."
      },
      {
       "name": "issuing_date_to",
@@ -150,6 +158,46 @@
        "type": "string"
       },
       "description": "Only invoices in this ISO 4217 currency. Narrows at the source."
+     },
+     {
+      "name": "invoice_type",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "subscription",
+        "add_on",
+        "credit",
+        "one_off",
+        "advance_charges",
+        "progressive_billing"
+       ]
+      },
+      "description": "EXACT: subscription, add_on, credit, one_off, advance_charges or progressive_billing."
+     },
+     {
+      "name": "payment_dispute_lost",
+      "in": "query",
+      "schema": {
+       "type": "boolean"
+      },
+      "description": "true: only invoices whose payment dispute was lost. Do NOT send false: Lago reads the text \"false\" as true."
+     },
+     {
+      "name": "amount_from",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Only invoices whose total_amount_cents is at least this many CENTS, inclusive."
+     },
+     {
+      "name": "amount_to",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      },
+      "description": "Only invoices whose total_amount_cents is at most this many CENTS, inclusive."
      }
     ],
     "responses": {
@@ -185,7 +233,7 @@
       "schema": {
        "type": "integer"
       },
-      "description": "Page size. 100 is accepted."
+      "description": "Page size. 200 is the largest every Lago release accepts: v1.53 takes any size, and later releases answer more than 200 with a 422 unless the operator raised LAGO_API_PAGINATION_MAX_PAGE_SIZE."
      }
     ],
     "responses": {
@@ -250,7 +298,7 @@
       "schema": {
        "type": "integer"
       },
-      "description": "Page size. 100 is accepted."
+      "description": "Page size. 200 is the largest every Lago release accepts: v1.53 takes any size, and later releases answer more than 200 with a 422 unless the operator raised LAGO_API_PAGINATION_MAX_PAGE_SIZE."
      },
      {
       "name": "external_customer_id",
@@ -266,7 +314,7 @@
       "style": "form",
       "explode": true,
       "required": false,
-      "description": "Statuses to list: active, pending, canceled, terminated. Repeated once per value; absent means active only.",
+      "description": "Statuses to list: active, pending, canceled, terminated, incomplete. Repeated once per value; absent means active only. Only the array form works: a scalar `status=` is ignored, and an unknown status makes Lago drop the whole filter and list every status.",
       "schema": {
        "type": "array",
        "items": {
@@ -275,10 +323,35 @@
          "active",
          "pending",
          "canceled",
-         "terminated"
+         "terminated",
+         "incomplete"
         ]
        }
       }
+     },
+     {
+      "name": "external_id",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only the subscription with this external id."
+     },
+     {
+      "name": "plan_code",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only subscriptions on the plan with this code."
+     },
+     {
+      "name": "currency",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      },
+      "description": "EXACT: only subscriptions whose plan is priced in this ISO 4217 currency (the plan's amount_currency)."
      }
     ],
     "responses": {

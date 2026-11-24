@@ -1,4 +1,6 @@
-# All through Lago's own API — never its database.
+# All through Lago's own API — never its database. Pinned against getlago/api v1.53.0; every filter
+# rule below was read in that version's source (app/queries/*, app/controllers/concerns/*_index.rb)
+# and then counted against a live Lago, with and without it, before being declared absorbed.
 #
 # Each record shape has ONE `project`, written out once per producer that returns it: the host
 # reads this file without resolving YAML anchors, so there is no way to say it once. Keep the
@@ -6,9 +8,28 @@
 # renames; `compute:` derives what the contract asks for in a shape Lago does not keep (money
 # in major units). types/lago.yml lists what the contract asks for and this realm still cannot give.
 #
-# The three `*All` producers are doors: the books have one scope, and it is not a Lago
-# parameter. `keyTemplate` with no `{keys}` in any arg means the key is sent nowhere, and
-# `echoKeyAs` stamps it on what comes back so the door's join can match it.
+# The `*All` producers are doors: the books have one scope, and it is not a Lago parameter.
+# `keyTemplate` with no `{keys}` in any arg means the key is sent nowhere, and `echoKeyAs` stamps
+# it on what comes back so the door's join can match it.
+#
+# PAGE SIZE. 200, everywhere. Lago v1.53 takes any `per_page`, but from the release after it every
+# v1 list answers a `per_page` above 200 with a 422 unless the operator raised
+# LAGO_API_PAGINATION_MAX_PAGE_SIZE (getlago/lago-api#6736). 200 is the largest page that works on
+# both, so an upgrade of Lago does not silently turn every read into an error.
+#
+# LAGO'S OWN COUNTS. `meta.total_count` is exact for customers, subscriptions and plans. For
+# INVOICES it is cached by Lago for up to 30 minutes under a key built from the scalar parameters
+# only (concerns/pagination.rb), so an array filter such as `payment_status[]` shares the count of
+# the unfiltered list. That is why no invoice producer declares a count aggregate or an `IN` rule:
+# a count read from that cache can be a different question's answer, or half an hour old while the
+# records are two minutes old. lagoInvoicesAll declares no `aggregates:` for that reason (audit R6).
+#
+# WHAT LAGO ACCEPTS AND IS NOT PUSHED is listed beside each producer, in Lago's parameter names. It
+# is not declared as `sourceFilters:`, which is compared with the rules' GRAPH property names and so
+# cannot describe a source whose fields this realm renames.
+#
+# CACHE WINDOWS follow how each record changes. One read holds records in every state, and a window
+# is per read, not per record, so the window is set by the most volatile thing the read holds.
 
 - name: lagoCustomersAll
   kind: api
@@ -16,34 +37,83 @@
   records: "$.customers[*]"
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
-  args: { per_page: 100 }
-  paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
+  args: { per_page: 200 }
+  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count }
   # "How many billing customers" is in the first response — `meta.total_count` beside the
-  # page — so it costs one call rather than walking up to fifty, and unlike the walk the
-  # number is not bounded by `maxPages`. `records: "$"` reads the envelope: the producer's
-  # own path selects a CUSTOMER, which carries no total (me#1402).
+  # page — so it costs one call rather than a walk. `records: "$"` reads the envelope: the producer's
+  # own path selects a CUSTOMER, which carries no total (me#1402). Customer counts are not cached by
+  # Lago, so the number is current; with `externalId` pushed it is a one-call existence test.
   aggregates:
     - measure: count
       valueField: meta.total_count
       records: "$"
-  # NO pushdown, deliberately. The only filter /customers takes is `search_term`, and it is a
-  # SUBSTRING match across name, external id AND email — so `name CONTAINS 'acme'` would come
-  # back as a SUPERSET including anyone whose email merely contains it. A rule here would report
-  # the predicate absorbed, and the engine would then answer "how many" with a count of that
-  # superset: a confident, exact, wrong number. A filter the source cannot apply EXACTLY is
-  # worth more left to the graph.
+  # Lago lists customers newest first (created_at desc, then id): `ORDER BY c.customerSince DESC
+  # LIMIT n` stops at the page that holds n.
+  orderedBy:
+    - { property: customerSince, descending: true }
+  # `external_id` is EXACT (verified: 1 of 3,356). Name is NOT pushed: the only text filter,
+  # `search_term`, is a case-insensitive SUBSTRING match over name, first/last/legal name, external id
+  # and email, so `name = 'Acme'` sent as a search would come back as a SUPERSET, and a count pushed
+  # over it would be a confident, exact, wrong number. A name goes through LagoCustomerSearch, whose
+  # join says it is a search. `currencies[]` and `countries[]` narrow too, but Lago answers a value
+  # outside its own currency or ISO 3166 list with a 422 rather than an empty page, so they stay
+  # graph-side: a typo should find nobody, not fail the question. Also accepted and not pushed:
+  # states[], zipcodes[], customer_type, has_tax_identification_number, metadata[key].
+  pushdown:
+    - { property: externalId, op: EQUALS, argPath: "external_id", clause: "{value}" }
   project:
     id: lago_id
     externalId: external_id
     name: name
+    legalName: legal_name
+    customerType: customer_type
     email: email
     url: url
     currency: currency
     country: country
+    timezone: applicable_timezone
     netPaymentTerm: net_payment_term
     customerSince: created_at
     slug: slug
-  cache: { kind: ttl, seconds: 300 }
+  # A customer's name, email or terms change rarely, and a new customer is worth seeing within minutes.
+  cache: { kind: ttl, seconds: 600, negativeTtlSeconds: 600 }
+
+# Customers FOUND BY A SEARCH TERM: what LagoCustomerSearch's FINDS edge reads. One call per term,
+# a superset by construction (substring, case-insensitive, over name, legal/first/last name,
+# external id and email); a query states what it means by filtering on `c.name` or `c.externalId`
+# afterwards, which is how a name lookup costs one call instead of a sweep of every customer.
+- name: lagoCustomersBySearch
+  kind: api
+  operation: lagoCustomersList
+  records: "$.customers[*]"
+  keyArg: search_term
+  batchSafe: false
+  echoKeyAs: term
+  args: { per_page: 200 }
+  paging: { style: page, param: page, size: 200, maxPages: 25, total: meta.total_count }
+  # Customer and plan totals are not cached by Lago: a count is one exact call.
+  aggregates:
+    - measure: count
+      valueField: meta.total_count
+      records: "$"
+  # Every record IS the answer to its search; a filter on top of it would split one search's cache.
+  pushdown: []
+  project:
+    id: lago_id
+    externalId: external_id
+    name: name
+    legalName: legal_name
+    customerType: customer_type
+    email: email
+    url: url
+    currency: currency
+    country: country
+    timezone: applicable_timezone
+    netPaymentTerm: net_payment_term
+    customerSince: created_at
+    slug: slug
+  # A search that found nobody is a real answer for as long as a found one is.
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # One account's billing customer, by the company's domain. Lago's search is a SUBSTRING match
 # over name, external id and email — a search, not a key — so this producer does NOT echo the
@@ -55,15 +125,20 @@
   records: "$.customers[*]"
   keyArg: search_term
   batchSafe: false
-  args: { per_page: 100 }
+  args: { per_page: 200 }
+  # The join links by the record's own url, through the spine; a filter would only split the search.
+  pushdown: []
   project:
     id: lago_id
     externalId: external_id
     name: name
+    legalName: legal_name
+    customerType: customer_type
     email: email
     url: url
     currency: currency
     country: country
+    timezone: applicable_timezone
     netPaymentTerm: net_payment_term
     customerSince: created_at
     slug: slug
@@ -71,6 +146,13 @@
   # as much as a customer: without a negative TTL every such account is asked again per query.
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
+# THE SUBSCRIPTIONS. Lago's listing takes, EXACTLY: external_customer_id, external_id, plan_code,
+# currency (the plan's amount_currency, which is what `currency` projects) and `status[]`. Each was
+# counted with and without (plan_code: 3,334 of 3,358; currency: 3,336; external_id: 1). `status`
+# is ONLY honoured as the array `status[]`: a scalar `status=terminated` is ignored and the active
+# list comes back. A status Lago does not know makes it ignore the whole status filter and list
+# every status, so the status rules only push Lago's own words. Subscription counts are not cached
+# by Lago, so `aggregates` answers "how many on plan X" in one call.
 - name: lagoSubscriptionsAll
   kind: api
   operation: lagoSubscriptionsList
@@ -79,104 +161,208 @@
   echoKeyAs: scopeKey
   # ACTIVE ONLY, by choice: this is the door every "what do they pay" view reads, and Lago's default
   # listing is exactly the subscriptions that bill. Ended ones come through lagoSubscriptionsAnyStatus.
-  args: { per_page: 100 }
-  paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
-  # `external_customer_id` is the only filter /subscriptions declares. `plan_code` and `status`
-  # look filterable on the records and are NOT parameters of this endpoint, so they stay
-  # graph-side: claiming them would push a count over every subscription in the book.
+  # No status rule here for that reason: pushing `status = 'terminated'` would make an active-only door
+  # answer with terminated subscriptions. Also accepted and not pushed: overridden, billing_entity_codes.
+  args: { per_page: 200 }
+  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count }
+  aggregates:
+    - measure: count
+      valueField: meta.total_count
+      records: "$"
   pushdown:
     - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
+    - { property: externalId, op: EQUALS, argPath: "external_id", clause: "{value}" }
+    - { property: planCode, op: EQUALS, argPath: "plan_code", clause: "{value}" }
+    - { property: currency, op: EQUALS, argPath: "currency", clause: "{value}" }
   project:
     id: lago_id
     externalId: external_id
     customerExternalId: external_customer_id
     product: name
     planCode: plan_code
+    nextPlanCode: next_plan_code
     status: status
+    billingTime: billing_time
     amountCents: plan_amount_cents
     currency: plan_amount_currency
+    subscriptionAt: subscription_at
     startedOn: started_at
+    periodStartedOn: current_billing_period_started_at
     periodEndsOn: current_billing_period_ending_at
+    endingOn: ending_at
+    canceledOn: canceled_at
+    cancellationReason: cancellation_reason
     terminatedOn: terminated_at
+    createdAt: created_at
   # Price per billing period in major units — the vocabulary's BillingSubscription.amount.
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
-  cache: { kind: ttl, seconds: 300 }
+  # A subscription changes at its period boundary or when somebody ends it. An empty answer (no
+  # subscription on that plan) is as true for the window as a full one.
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # Every subscription whatever its status: what churn, cancellation and "did they ever" questions need.
-# Lago lists the others only when `status[]` names them, once per status.
+# Lago lists the others only when `status[]` names them. A status rule REPLACES that list, so
+# `s.status = 'terminated'` asks Lago for terminated subscriptions alone.
 - name: lagoSubscriptionsAnyStatus
   kind: api
   operation: lagoSubscriptionsList
   records: "$.subscriptions[*]"
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
-  args: { per_page: 100, "status[]": [active, pending, canceled, terminated] }
-  paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
+  args: { per_page: 200, "status[]": [active, pending, canceled, terminated, incomplete] }
+  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count }
+  aggregates:
+    - measure: count
+      valueField: meta.total_count
+      records: "$"
   pushdown:
+    - { property: status, op: EQUALS, argPath: "status[]", clause: ["{value}"],
+        valuePattern: '^(active|pending|canceled|terminated|incomplete)$' }
+    # An IN reaches this rule as its whole comparison text; the pattern admits it only when every
+    # member is one of Lago's statuses.
+    - { property: status, op: IN, argPath: "status[]", clause: "{values}",
+        valuePattern: '(\[\s*[''"](?:active|pending|canceled|terminated|incomplete)[''"](?:\s*,\s*[''"](?:active|pending|canceled|terminated|incomplete)[''"])*\s*\])\s*$' }
     - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
+    - { property: externalId, op: EQUALS, argPath: "external_id", clause: "{value}" }
+    - { property: planCode, op: EQUALS, argPath: "plan_code", clause: "{value}" }
+    - { property: currency, op: EQUALS, argPath: "currency", clause: "{value}" }
   project:
     id: lago_id
     externalId: external_id
     customerExternalId: external_customer_id
     product: name
     planCode: plan_code
+    nextPlanCode: next_plan_code
     status: status
+    billingTime: billing_time
     amountCents: plan_amount_cents
     currency: plan_amount_currency
+    subscriptionAt: subscription_at
     startedOn: started_at
+    periodStartedOn: current_billing_period_started_at
     periodEndsOn: current_billing_period_ending_at
+    endingOn: ending_at
+    canceledOn: canceled_at
+    cancellationReason: cancellation_reason
     terminatedOn: terminated_at
+    createdAt: created_at
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
-  cache: { kind: ttl, seconds: 300 }
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
+# One customer's ACTIVE subscriptions, one call. A customer has a handful, so the read is taken
+# whole (`readWhole`) and every question about that customer shares it; the rules stay declared so
+# the books' door above, which has thousands, sends them.
 - name: lagoSubscriptionsByCustomer
   kind: api
   operation: lagoSubscriptionsList
   records: "$.subscriptions[*]"
   keyArg: external_customer_id
   batchSafe: false
-  args: { per_page: 100 }
+  args: { per_page: 200 }
+  paging: { style: page, param: page, size: 200, maxPages: 5 }
+  readWhole: true
+  pushdown:
+    - { property: planCode, op: EQUALS, argPath: "plan_code", clause: "{value}" }
+    - { property: currency, op: EQUALS, argPath: "currency", clause: "{value}" }
   project:
     id: lago_id
     externalId: external_id
     customerExternalId: external_customer_id
     product: name
     planCode: plan_code
+    nextPlanCode: next_plan_code
     status: status
+    billingTime: billing_time
     amountCents: plan_amount_cents
     currency: plan_amount_currency
+    subscriptionAt: subscription_at
     startedOn: started_at
+    periodStartedOn: current_billing_period_started_at
     periodEndsOn: current_billing_period_ending_at
+    endingOn: ending_at
+    canceledOn: canceled_at
+    cancellationReason: cancellation_reason
     terminatedOn: terminated_at
+    createdAt: created_at
   # Price per billing period in major units — the vocabulary's BillingSubscription.amount.
+  compute:
+    amount: "toFloat(r.amountCents) / 100.0"
+  cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
+
+# One customer's subscriptions in EVERY status, one call: "did they ever cancel", "what did they
+# have before". Read whole for the same reason as the active list above.
+- name: lagoSubscriptionsByCustomerAnyStatus
+  kind: api
+  operation: lagoSubscriptionsList
+  records: "$.subscriptions[*]"
+  keyArg: external_customer_id
+  batchSafe: false
+  args: { per_page: 200, "status[]": [active, pending, canceled, terminated, incomplete] }
+  paging: { style: page, param: page, size: 200, maxPages: 5 }
+  readWhole: true
+  pushdown:
+    - { property: status, op: EQUALS, argPath: "status[]", clause: ["{value}"],
+        valuePattern: '^(active|pending|canceled|terminated|incomplete)$' }
+  project:
+    id: lago_id
+    externalId: external_id
+    customerExternalId: external_customer_id
+    product: name
+    planCode: plan_code
+    nextPlanCode: next_plan_code
+    status: status
+    billingTime: billing_time
+    amountCents: plan_amount_cents
+    currency: plan_amount_currency
+    subscriptionAt: subscription_at
+    startedOn: started_at
+    periodStartedOn: current_billing_period_started_at
+    periodEndsOn: current_billing_period_ending_at
+    endingOn: ending_at
+    canceledOn: canceled_at
+    cancellationReason: cancellation_reason
+    terminatedOn: terminated_at
+    createdAt: created_at
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # THE PLANS. A subscription carries only its plan's CODE; the name people use and how long one
 # billing period lasts live on the plan, which Lago lists apart. A book has few plans — typically
-# one page — so the door reads them all, and the by-code
-# lookup is what a subscription's ON_PLAN uses when only a few are asked about.
+# one page — so the door reads them all, and the by-code lookup is what a subscription's ON_PLAN
+# uses when only a few are asked about. Plans are edited rarely and deliberately: an hour.
 - name: lagoPlansAll
   kind: api
   operation: lagoPlansList
   records: "$.plans[*]"
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
-  args: { per_page: 100 }
-  paging: { style: page, param: page, size: 100, maxPages: 50, total: meta.total_count }
+  args: { per_page: 200 }
+  paging: { style: page, param: page, size: 200, maxPages: 25, total: meta.total_count }
+  # Customer and plan totals are not cached by Lago: a count is one exact call.
+  aggregates:
+    - measure: count
+      valueField: meta.total_count
+      records: "$"
+  # Lago's plan listing takes no filter at all (PlansController#index passes none), and a book's
+  # plans are one page: there is nothing to push.
+  pushdown: []
   project:
     id: lago_id
     code: code
     name: name
+    description: description
     interval: interval
+    payInAdvance: pay_in_advance
+    trialPeriodDays: trial_period
     amountCents: amount_cents
     currency: amount_currency
+    createdAt: created_at
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
-  cache: { kind: ttl, seconds: 300 }
+  cache: { kind: ttl, seconds: 3600, negativeTtlSeconds: 3600 }
 
 - name: lagoPlanByCode
   kind: api
@@ -185,42 +371,79 @@
   # `keyArgs`, not `keyArg`: the code is a PATH parameter, and keyArg sent it as a one-element
   # list (`/plans/[<code>]`, a 404). keyArgs hands each key over as a scalar, one call per key.
   keyArgs: [code]
+  pushdown: []
   project:
     id: lago_id
     code: code
     name: name
+    description: description
     interval: interval
+    payInAdvance: pay_in_advance
+    trialPeriodDays: trial_period
     amountCents: amount_cents
     currency: amount_currency
+    createdAt: created_at
   compute:
     amount: "toFloat(r.amountCents) / 100.0"
-  cache: { kind: ttl, seconds: 300 }
+  cache: { kind: ttl, seconds: 3600, negativeTtlSeconds: 3600 }
 
+# THE INVOICES. Finalized only: a draft is not yet a bill, and counting it as money owed would be wrong.
+# Lago returns them newest ISSUED first (issuing_date desc, created_at desc, id), which `orderedBy`
+# states so "the latest invoice" reads one page rather than the book.
+#
+# Lago filters through QUERY PARAMS, so each rule SETS its parameter. Properties are the names on
+# the LEFT of `project:`, because that is what a query writes. Every rule is exact, each counted
+# against the live book (pending 1,886 + succeeded 2,658 + failed 94 = 4,638; GBP 2,066; overdue 14;
+# dispute lost 1; one_off 3,406). Values Lago would answer with a 422 (a payment status it does not
+# know, a non-numeric amount) are kept out by `valuePattern` and filtered in the graph instead.
+#
+# NOT pushed, on purpose:
+#   paymentStatus IN [...] / <> 'succeeded'  `payment_status[]` filters the records, but Lago's
+#                 cached count for it is the count of the UNFILTERED list (above), and a page walk
+#                 planned from that total reads pages that are not there.
+#   disputeLost = false   Lago reads `payment_dispute_lost=false` as the TEXT "false", which Ruby
+#                 takes as true, and returns the LOST ones. Only `= true` is sent.
+#   issuedOn with a time  Lago keeps a date; a bound with a time of day compares differently in the
+#                 graph, so only a bare YYYY-MM-DD is sent.
+#   number        only reachable through `search_term`, a substring search — a superset.
+#   partially_paid, self_billed, purchase_order_number, metadata[key]: accepted, and no property here
+#                 reads them (open-source Lago records no partial payment; a metadata filter is on
+#                 the child LagoInvoiceMetadata, not on the invoice).
 - name: lagoInvoicesAll
   kind: api
   operation: lagoInvoicesList
   records: "$.invoices[*]"
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
-  # Finalized only: a draft is not yet a bill, and counting it as money owed would be wrong.
-  args: { per_page: 100, status: finalized }
-  paging: { style: page, param: page, size: 100, maxPages: 500, total: meta.total_count }
-  # Lago filters through QUERY PARAMS rather than a clause list, so each rule SETS its parameter
-  # (a plain `argPath` assigns; only a trailing `-` appends). Only the ones the pinned spec
-  # actually declares are here — a parameter the endpoint ignores would be reported as absorbed
-  # and the engine would then push a count over the UNFILTERED set.
-  #
-  # Properties are the names on the LEFT of `project:`, because that is what a query writes.
-  # `payment_overdue` is a boolean and reaches Lago as one, not as the word "true".
+  args: { per_page: 200, status: finalized }
+  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count }
+  orderedBy:
+    - { property: issuedOn, descending: true }
   pushdown:
-    - { property: paymentStatus, op: EQUALS, argPath: "payment_status", clause: "{value}" }
+    - { property: paymentStatus, op: EQUALS, argPath: "payment_status", clause: "{value}",
+        valuePattern: '^(pending|succeeded|failed)$' }
     - { property: overdue, op: EQUALS, argPath: "payment_overdue", clause: "{value}" }
+    - { property: disputeLost, op: EQUALS, argPath: "payment_dispute_lost", clause: "{value}",
+        valuePattern: '^(true)$' }
     - { property: customerExternalId, op: EQUALS, argPath: "external_customer_id", clause: "{value}" }
-    # Issue-date windows and currency: both inclusive bounds and the currency filter were checked
-    # against Lago's own database (counts equal) before being declared absorbed.
-    - { property: issuedOn, op: GREATER_THAN_OR_EQUAL, argPath: "issuing_date_from", clause: "{value}" }
-    - { property: issuedOn, op: LESS_THAN_OR_EQUAL, argPath: "issuing_date_to", clause: "{value}" }
     - { property: currency, op: EQUALS, argPath: "currency", clause: "{value}" }
+    - { property: invoiceType, op: EQUALS, argPath: "invoice_type", clause: "{value}",
+        valuePattern: '^(subscription|add_on|credit|one_off|advance_charges|progressive_billing)$' }
+    # Issue-date windows: both bounds inclusive, as Lago applies them. An equality is both bounds,
+    # so a single day is one exact request.
+    - { property: issuedOn, op: GREATER_THAN_OR_EQUAL, argPath: "issuing_date_from", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: issuedOn, op: LESS_THAN_OR_EQUAL, argPath: "issuing_date_to", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: issuedOn, op: EQUALS, argPath: "issuing_date_from", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: issuedOn, op: EQUALS, argPath: "issuing_date_to", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    # Totals in CENTS, inclusive: `total_amount_cents >= amount_from`.
+    - { property: amountCents, op: GREATER_THAN_OR_EQUAL, argPath: "amount_from", clause: "{value}",
+        valuePattern: '^(\d+)$' }
+    - { property: amountCents, op: LESS_THAN_OR_EQUAL, argPath: "amount_to", clause: "{value}",
+        valuePattern: '^(\d+)$' }
   project:
     id: lago_id
     number: number
@@ -233,9 +456,12 @@
     amountCents: total_amount_cents
     amountPaidCents: total_paid_amount_cents
     amountDueCents: total_due_amount_cents
+    taxAmountCents: taxes_amount_cents
     currency: currency
     issuedOn: issuing_date
     dueOn: payment_due_date
+    netPaymentTerm: net_payment_term
+    createdAt: created_at
     invoiceType: invoice_type
     sourceUrl: web_url
     # No `metadata`: Lago's is a list of key/value maps, which no graph property can hold, so
@@ -255,16 +481,31 @@
     amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
     amountDue: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END) / 100.0"
     disputeLost: "r.disputeLostOn IS NOT NULL"
-  cache: { kind: ttl, seconds: 120 }
+  # A finalized invoice's amounts never change; its PAYMENT STATUS does, the moment somebody marks
+  # it paid, and that is what every unpaid question reads. Two minutes, for an empty answer too.
+  cache: { kind: ttl, seconds: 120, negativeTtlSeconds: 120 }
 
+# One customer's invoices, one call (a page of 200; a customer with more walks on). Read whole, so
+# every question about that customer — unpaid, last quarter's, the latest — shares the read; the
+# rules stay declared for the books' door above, which has thousands.
 - name: lagoInvoicesByCustomer
   kind: api
   operation: lagoInvoicesList
   records: "$.invoices[*]"
   keyArg: external_customer_id
   batchSafe: false
-  args: { per_page: 100, status: finalized }
-  paging: { style: page, param: page, size: 100, maxPages: 20 }
+  args: { per_page: 200, status: finalized }
+  paging: { style: page, param: page, size: 200, maxPages: 20 }
+  orderedBy:
+    - { property: issuedOn, descending: true }
+  readWhole: true
+  pushdown:
+    - { property: paymentStatus, op: EQUALS, argPath: "payment_status", clause: "{value}",
+        valuePattern: '^(pending|succeeded|failed)$' }
+    - { property: issuedOn, op: GREATER_THAN_OR_EQUAL, argPath: "issuing_date_from", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
+    - { property: issuedOn, op: LESS_THAN_OR_EQUAL, argPath: "issuing_date_to", clause: "{value}",
+        valuePattern: '^(\d{4}-\d{2}-\d{2})$' }
   project:
     id: lago_id
     number: number
@@ -277,24 +518,19 @@
     amountCents: total_amount_cents
     amountPaidCents: total_paid_amount_cents
     amountDueCents: total_due_amount_cents
+    taxAmountCents: taxes_amount_cents
     currency: currency
     issuedOn: issuing_date
     dueOn: payment_due_date
+    netPaymentTerm: net_payment_term
+    createdAt: created_at
     invoiceType: invoice_type
     sourceUrl: web_url
-    # No `metadata`: Lago's is a list of key/value maps, which no graph property can hold, so
-    # projecting it stored nothing and warned PROPERTY_NOT_STORED on every read. A duty treats that
-    # warning as doubt about its rows, so the steward's at-risk duties could never reach a verdict.
-    # The entries reach the graph whole as LagoInvoiceMetadata, read from the record by the type.
-  # A succeeded invoice is paid in full and owes nothing. Lago keeps its paid and due totals from
-  # recorded payments, and open-source Lago cannot record one (seed/load_book.py), so an invoice
-  # marked succeeded there still reports its whole amount as due — summed, every paid bill reads as
-  # owed. The status is the fact; these follow it. A pending or failed invoice keeps Lago's figures.
+    # No `metadata`: see lagoInvoicesAll. The entries reach the graph as LagoInvoiceMetadata.
+  # A succeeded invoice is paid in full and owes nothing — see lagoInvoicesAll.
   compute:
     amountPaidCents: "CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END"
     amountDueCents: "CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END"
-    # The vocabulary's own names, in major units: what a view that names no product reads.
-    # amountPaid follows the status for the same reason amountPaidCents does.
     amount: "toFloat(r.amountCents) / 100.0"
     amountPaid: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN r.amountCents ELSE r.amountPaidCents END) / 100.0"
     amountDue: "toFloat(CASE r.paymentStatus WHEN 'succeeded' THEN 0 ELSE r.amountDueCents END) / 100.0"
