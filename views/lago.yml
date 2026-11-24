@@ -204,18 +204,18 @@
     "how much recurring revenue is at stake with <customer>". Base plan prices only: usage charges
     and taxes are not in it. Billing ONLY — not for revenue tied to support cases or deals.
   outputLabel: CustomerRecurringRow
-  # Plans, subscriptions and customers are each swept once, so every subscription finds its plan by
-  # code (ON_PLAN's materializedKeyField) and its customer by externalId (HAS_SUBSCRIPTION's) with no
-  # fetch per record, which is refused above 200 keys (embabel/me#1489).
+  # One path, customers first: their subscriptions ride the swept books by customerExternalId (HAS_SUBSCRIPTION's
+  # materializedKeyField) rather than one fetch per customer, refused above 200 (embabel/me#1489), and each
+  # subscription's plan is one lookup per distinct plan code, cached an hour. Matching the plans, the
+  # subscriptions and the customers as three separate sets and joining them exceeded the engine's match budget
+  # at 3,356 customers.
   params:
     limit:
       type: int
       default: 50
       description: "Maximum rows."
   cypher: |
-    MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:BillingPlan)
-    MATCH (b)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p)
-    MATCH (b)-[:HAS_CUSTOMER]->(c:BillingCustomer)-[:HAS_SUBSCRIPTION]->(s)
+    MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p:BillingPlan)
     WITH c, s, p,
          CASE p.interval WHEN 'weekly' THEN 52 WHEN 'monthly' THEN 12 WHEN 'quarterly' THEN 4
                          WHEN 'semiannual' THEN 2 WHEN 'yearly' THEN 1 END AS periodsPerYear

@@ -48,9 +48,10 @@ view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'C
 # A refused query has no rows and an `error`; reading that as 0 once passed an exactness check
 # whose query the engine had refused outright. So a refusal prints REFUSED, which no check expects.
 n() { python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("rows") or []; print("REFUSED: " + str(d["error"])[:160] if d.get("error") else (r[0]["n"] if r else 0))'; }
-calls() { python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("apiCalls", ""))' "$1"; }
-vcalls() { python3 -c 'import json,sys; print((json.loads(sys.argv[1]).get("metrics") or {}).get("externalCalls", ""))' "$1"; }
-rows() { python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(len(d["data"]) if "data" in d else "REFUSED: " + str(d)[:160])' "$1"; }
+calls() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("apiCalls", ""))'; }
+vcalls() { printf '%s' "$1" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("metrics") or {}).get("externalCalls", ""))'; }
+# Read from stdin: a whole book of rows passed as an argument is past the system's argument limit.
+rows() { printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["data"]) if isinstance(d.get("data"), list) else "REFUSED: " + str(d.get("error") or d)[:160])'; }
 t() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; print(v)' "$TRUTHF" "$1"; }
 
 echo "== L0: ground truth, from Lago directly =="
