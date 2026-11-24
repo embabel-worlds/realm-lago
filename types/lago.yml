@@ -27,7 +27,9 @@
 # MONEY. Lago speaks integer CENTS (minor units: 10000 is 100.00) and the vocabulary major units, so
 # the producers COMPUTE `amount` (and an invoice's `amountPaid`, `amountDue`) in major units beside
 # Lago's own `amountCents` / `amountPaidCents` / `amountDueCents`. Money is always in its record's
-# `currency`; never add two currencies together.
+# `currency`; never add two currencies together. Each money property declares this as fields —
+# `unit: cents` on the cents, `currency: currency` on all of them — so a model writing a query sees
+# the unit and the currency under the type, and the descriptions say only what those cannot.
 #
 # TWO CLOCKS. Every date Lago holds is Lago's: when the record was made or billed IN LAGO. A book
 # migrated into Lago keeps the business's own dates beside them — an invoice's in its metadata
@@ -102,8 +104,8 @@
     currency: "The ISO 4217 code this customer is billed in (GBP, USD, EUR). Every amount on their invoices and subscriptions is in it."
     country: "ISO 3166-1 alpha-2 country of the billing address (GB, US); empty when no address was entered."
     timezone: "The IANA time zone Lago bills this customer in (the customer's own, else the organization's): where 'the 1st of the month' is."
-    netPaymentTerm: { type: int, description: "Days after issue an invoice falls due (30 = net 30). Lago's due date is issuedOn plus this." }
-    customerSince: "When the record was created IN LAGO, ISO timestamp UTC (created_at): Lago's clock, not when the relationship began; for a migrated book, the migration day. Lago keeps no start date."
+    netPaymentTerm: { type: int, unit: days, description: "Days after issue an invoice falls due (30 = net 30). Lago's due date is issuedOn plus this." }
+    customerSince: { format: "ISO 8601 timestamp, UTC", description: "When the record was created IN LAGO (created_at): Lago's clock, not when the relationship began; for a migrated book, the migration day. Lago keeps no start date." }
     slug: "Lago's short reference for the customer; the prefix of its invoice numbers (ACME-001 → ACME-001-002)."
     scopeKey: "Bookkeeping: the books scope this customer was fetched under. Not a business fact."
     term: "Bookkeeping: the search term this customer was found by, when reached through LagoCustomerSearch. Not a business fact."
@@ -175,17 +177,18 @@
       plan change; incomplete waits on an activation rule such as a first payment; terminatedOn and
       canceledOn say when.
     billingTime: "anniversary (each period runs from the start day, e.g. the 22nd to the 21st) or calendar (periods follow calendar months or years)."
-    amountCents: { type: int, description: "The plan's base price for ONE billing period, in CENTS of `currency` (10000 = 100.00). Usage charges and taxes are not in it. In major units: `amount`. Annualize through the plan's interval, never by assuming monthly." }
+    amountCents: { type: int, unit: cents, currency: currency, description: "The plan's base price for ONE billing period (10000 = 100.00). Usage charges and taxes are not in it. In major units: `amount`. Annualize through the plan's interval, never by assuming monthly." }
+    amount: { type: float, currency: currency, description: "The same base price per ONE billing period, in major units (amountCents / 100)." }
     currency: "ISO 4217 code of the plan's price."
-    subscriptionAt: "The start date the subscription was CREATED with (subscription_at, ISO timestamp) — the business's date. For a book migrated into Lago this is the real start, earlier than createdAt."
-    startedOn: "When it actually began billing (started_at, ISO timestamp); empty while pending."
-    periodStartedOn: "When the current billing period began (ISO timestamp)."
-    periodEndsOn: "When the current paid period ends — the next renewal (ISO timestamp). It renews every period, not once: a monthly subscription renews again a month later, so its renewals in a span of time are every period end inside it, not only this one."
-    endingOn: "The date it is set to end on its own (ending_at); empty means it renews until somebody ends it."
-    canceledOn: "When a pending subscription was canceled before it started, ISO timestamp UTC (Lago's clock); empty otherwise."
+    subscriptionAt: { format: "ISO 8601 timestamp, UTC", description: "The start date the subscription was CREATED with (subscription_at) — the business's date. For a book migrated into Lago this is the real start, earlier than createdAt." }
+    startedOn: { format: "ISO 8601 timestamp, UTC", description: "When it actually began billing (started_at); empty while pending." }
+    periodStartedOn: { format: "ISO 8601 timestamp, UTC", description: "When the current billing period began." }
+    periodEndsOn: { format: "ISO 8601 timestamp, UTC", description: "When the current paid period ends — the next renewal. It renews every period, not once: a monthly subscription renews again a month later, so its renewals in a span of time are every period end inside it, not only this one." }
+    endingOn: { format: "ISO 8601 timestamp, UTC", description: "When it is set to end on its own (ending_at); empty means it renews until somebody ends it." }
+    canceledOn: { format: "ISO 8601 timestamp, UTC", description: "When a pending subscription was canceled before it started (Lago's clock); empty otherwise." }
     cancellationReason: "Why it was canceled: payment_failed, timeout or manual; empty unless canceled."
-    terminatedOn: "When it was terminated (ended after running), ISO timestamp UTC (Lago's clock); empty while it runs."
-    createdAt: "When the record was created IN LAGO (ISO timestamp) — Lago's clock, which for a migrated book is the migration day."
+    terminatedOn: { format: "ISO 8601 timestamp, UTC", description: "When it was terminated (ended after running), Lago's clock; empty while it runs." }
+    createdAt: { format: "ISO 8601 timestamp, UTC", description: "When the record was created IN LAGO — Lago's clock, which for a migrated book is the migration day." }
     scopeKey: "Bookkeeping: the books scope this subscription was fetched under. Not a business fact."
   virtualJoins:
     # implicitDoor: with two doors from the books, a bare MATCH (s:BillingSubscription) needs telling
@@ -240,11 +243,11 @@
     description: "Free text someone wrote about the plan; often empty."
     interval: "How long one billing period is, in Lago's word: weekly, monthly, quarterly (3 months), semiannual (6 months) or yearly. Periods per year: 52, 12, 4, 2, 1."
     payInAdvance: { type: boolean, description: "True: the base price is invoiced at the START of each period. False: at its end (in arrears), so a new subscription first bills a period after it starts." }
-    trialPeriodDays: { type: float, description: "Free days before the first period bills; 0 or empty for none." }
-    amountCents: { type: int, description: "Base price per billing period, in CENTS of `currency` (10000 = 100.00). In major units: `amount`. Empty for a plan priced only through usage charges." }
-    amount: { type: float, description: "Base price per billing period, in major units of `currency`." }
+    trialPeriodDays: { type: float, unit: days, description: "Free days before the first period bills; 0 or empty for none." }
+    amountCents: { type: int, unit: cents, currency: currency, description: "Base price per billing period (10000 = 100.00). In major units: `amount`. Empty for a plan priced only through usage charges." }
+    amount: { type: float, currency: currency, description: "Base price per billing period, in major units." }
     currency: "ISO 4217 code of the price."
-    createdAt: "When the plan was created in Lago (ISO timestamp)."
+    createdAt: { format: "ISO 8601 timestamp, UTC", description: "When the plan was created in Lago." }
     scopeKey: "Bookkeeping: the books scope this plan was fetched under. Not a business fact."
   virtualJoins:
     - { anchorLabel: LagoBooks, relationship: HAS_PLAN, keyField: scope,
@@ -276,20 +279,24 @@
       collection was tried and did not work. An equality is sent to Lago. pending is where every
       invoice starts, and stays until someone marks it paid or a collection fails.
     overdue: { type: boolean, description: "True once Lago's due date (dueOn) has passed with it unpaid; Lago's clock, so a migrated invoice is not overdue here until Lago's own due date, whatever its book said." }
-    disputeLostOn: "When the customer disputed the payment with their bank and won (ISO timestamp); empty when no dispute was lost."
-    amountCents: { type: int, description: "Total billed incl. tax, in CENTS (minor units) of `currency`: 10000 = 100.00; major units: `amount`. Sum per currency, never across. Range filters (>=, <=) are sent to Lago." }
-    amountPaidCents: { type: int, description: "How much has been received, in CENTS; in major units `amountPaid`. A succeeded invoice counts as paid in full; open-source Lago records no partial payments, so a pending or failed one reads 0." }
-    amountDueCents: { type: int, description: "What is still owed, in CENTS; 0 once succeeded. In major units `amountDue`." }
-    amountDue: { type: float, description: "What is still owed, in major units of `currency`; 0 once succeeded." }
-    taxAmountCents: { type: int, description: "The tax inside amountCents, in CENTS; 0 when no tax applies." }
+    disputeLostOn: { format: "ISO 8601 timestamp, UTC", description: "When the customer disputed the payment with their bank and won; empty when no dispute was lost." }
+    amountCents: { type: int, unit: cents, currency: currency, description: "Total billed incl. tax (10000 = 100.00); major units: `amount`. Sum per currency, never across. Range filters (>=, <=) are sent to Lago." }
+    amount: { type: float, currency: currency, description: "Total billed incl. tax, in major units (amountCents / 100). Sum per currency, never across." }
+    amountPaid: { type: float, currency: currency, description: "How much has been received, in major units: the whole amount once succeeded, else 0." }
+    amountPaidCents: { type: int, unit: cents, currency: currency, description: "How much has been received; in major units `amountPaid`. A succeeded invoice counts as paid in full; open-source Lago records no partial payments, so a pending or failed one reads 0." }
+    amountDueCents: { type: int, unit: cents, currency: currency, description: "What is still owed; 0 once succeeded. In major units `amountDue`." }
+    amountDue: { type: float, currency: currency, description: "What is still owed, in major units; 0 once succeeded." }
+    taxAmountCents: { type: int, unit: cents, currency: currency, description: "The tax inside amountCents; 0 when no tax applies." }
     currency: "ISO 4217 code every amount on this invoice is in. An equality is sent to Lago."
-    issuedOn: >-
-      The day Lago issued it, YYYY-MM-DD: LAGO'S clock. For an invoice migrated from another system
-      that is the load day; its real issue date is `issued=` in its `dates` metadata. Lago's own
-      subscription invoices carry their billing day. Bare-date bounds (>=, <=, =) are sent to Lago.
-    dueOn: "The day payment is due by Lago's reckoning: issuedOn plus netPaymentTerm. Lago's clock, like issuedOn; a migrated book's own due date is the `due=` part of its `dates` metadata."
-    netPaymentTerm: { type: int, description: "Days between issue and due date on this invoice." }
-    createdAt: "When Lago created the record (ISO timestamp, UTC). Lago's clock."
+    issuedOn:
+      format: yyyy-MM-dd
+      description: >-
+        The day Lago issued it: LAGO'S clock. For an invoice migrated from another system
+        that is the load day; its real issue date is `issued=` in its `dates` metadata. Lago's own
+        subscription invoices carry their billing day. Bare-date bounds (>=, <=, =) are sent to Lago.
+    dueOn: { format: yyyy-MM-dd, description: "The day payment is due by Lago's reckoning: issuedOn plus netPaymentTerm. Lago's clock, like issuedOn; a migrated book's own due date is the `due=` part of its `dates` metadata." }
+    netPaymentTerm: { type: int, unit: days, description: "Days between issue and due date on this invoice." }
+    createdAt: { format: "ISO 8601 timestamp, UTC", description: "When Lago created the record. Lago's clock." }
     invoiceType: "subscription, one_off, add_on, credit, advance_charges or progressive_billing. subscription: one period of a subscription; one_off: raised by hand or API; credit: wallet credits bought. Sent to Lago."
     sourceUrl: "Opens this invoice in Lago's UI."
     scopeKey: "Bookkeeping: the books scope this invoice was fetched under. Not a business fact."
