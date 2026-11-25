@@ -7,7 +7,7 @@ description: >-
   CustomerAccount spine by its url, which is how an account the CRM knows reaches what
   billing knows about it. Every type is virtual: nothing is mirrored, and a change made in
   Lago's own UI is what the next query sees.
-version: 0.2.7
+version: 0.2.8
 # The business vocabulary declares the parent types every type here fills and the CustomerAccount
 # spine; without it the types cannot load and the install is refused. Declared, so installing this
 # realm brings the vocabulary in.

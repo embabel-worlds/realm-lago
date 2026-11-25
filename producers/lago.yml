@@ -418,12 +418,14 @@
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
   args: { per_page: 200, status: finalized }
-  # No `total:`, unlike the other book doors. Lago's invoice total_count is cached under a key that
-  # ignores some filters (see LAGO'S OWN COUNTS above): asked for one customer's 2 invoices it
-  # answers total_count 4,638 and total_pages 24. Declared as the walk's total, that made the host
-  # read the short last page as a truncation and mark an exact answer PARTIAL. Without it the walk
-  # reads until a page comes back short, one page after another.
-  paging: { style: page, param: page, size: 200, maxPages: 250 }
+  # Lago's invoice total_count counts by every filter this door sends but one: it is cached under a
+  # key that leaves external_customer_id out, so one customer's 13 invoices arrive beside the book's
+  # 4,638. Checked filter by filter against a walk of the records: payment_status, payment_overdue,
+  # payment_dispute_lost, currency, invoice_type, the issuing dates and the amounts each report their
+  # own count. `totalIgnores` says so, and a request that sends a customer is walked to a short page
+  # as though no total were declared; every other read keeps the total, and with it the walk that
+  # fetches the pages after the first together.
+  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count, totalIgnores: [external_customer_id] }
   orderedBy:
     - { property: issuedOn, descending: true }
   pushdown:
