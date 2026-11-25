@@ -116,7 +116,7 @@ never the one holding the book: a void cannot be undone, and a subscription's in
 ## Setup
 
 1. **realm-business-vocabulary installed first.** It declares the billing types and the
-   `CustomerAccount` spine. A realm cannot yet declare that it needs another.
+   `CustomerAccount` spine. The realm `requires` it, so installing this realm brings it in.
 2. **A host with realm-declared spines.** `hub: CustomerAccount` and the `BILLED_AS` join need
    one; on an older host the realm loads and the account join returns nothing.
 3. **`LAGO_API_KEY`** in the appliance's environment: an organization API key (Lago:
