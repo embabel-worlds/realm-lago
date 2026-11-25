@@ -418,7 +418,12 @@
   keyTemplate: "{key}"
   echoKeyAs: scopeKey
   args: { per_page: 200, status: finalized }
-  paging: { style: page, param: page, size: 200, maxPages: 250, total: meta.total_count }
+  # No `total:`, unlike the other book doors. Lago's invoice total_count is cached under a key that
+  # ignores some filters (see LAGO'S OWN COUNTS above): asked for one customer's 2 invoices it
+  # answers total_count 4,638 and total_pages 24. Declared as the walk's total, that made the host
+  # read the short last page as a truncation and mark an exact answer PARTIAL. Without it the walk
+  # reads until a page comes back short, one page after another.
+  paging: { style: page, param: page, size: 200, maxPages: 250 }
   orderedBy:
     - { property: issuedOn, descending: true }
   pushdown:
