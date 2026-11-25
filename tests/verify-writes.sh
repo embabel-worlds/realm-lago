@@ -53,8 +53,8 @@ for (const [id, op] of Object.entries(ops)) lago[id] = (args = {}) => {
 };
 const gateway = { lago };
 const bind = (Klass, fields) => Object.assign(Object.assign(new Klass(), fields), { gateway });
-const { LagoCustomer } = require(process.env.DIST + "/customer.js");
-const { LagoInvoice } = require(process.env.DIST + "/invoice.js");
+const { LagoCustomer } = require(process.env.DIST + "/lago-customer.js");
+const { LagoInvoice } = require(process.env.DIST + "/lago-invoice.js");
 
 (async () => {
   const tag = "verify-" + Date.now();

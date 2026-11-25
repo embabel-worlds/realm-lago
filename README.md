@@ -91,7 +91,9 @@ per record, so it is set by the most volatile thing the read holds.
 ## Working on what billing finds
 
 `LagoCustomer` and `LagoInvoice` carry methods, written in TypeScript in `src/api/`, each calling
-one of two write verbs in `apis/lago.json`:
+one of two write verbs in `apis/lago.json`. Each file there is a gateway namespace named after
+it, `lago-customer.ts` as `lago_customer`. The `lago_` matters: a namespace that two installed
+realms both contribute is withdrawn from both, and a CRM realm has a customer too.
 
 | Type | Method | Does |
 |---|---|---|

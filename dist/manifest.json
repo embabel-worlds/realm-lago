@@ -1,9 +1,9 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-01T22:45:25.743Z",
+  "generatedAt": "2026-11-25T07:15:07.830Z",
   "entries": [
     {
-      "namespace": "customer",
+      "namespace": "lago_customer",
       "name": "neighbors",
       "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
       "inputSchema": {
@@ -55,7 +55,7 @@
       "className": "LagoCustomer"
     },
     {
-      "namespace": "customer",
+      "namespace": "lago_customer",
       "name": "subscribe",
       "description": "Start billing this customer on a plan. A plan billed in advance is invoiced at once.",
       "inputSchema": {
@@ -109,7 +109,7 @@
       "className": "LagoCustomer"
     },
     {
-      "namespace": "invoice",
+      "namespace": "lago_invoice",
       "name": "neighbors",
       "description": "Who/what this entity is connected to, related to, or works with in the knowledge graph. Inherited by every pack type, so a new type is graph- navigable for free. Walks outward `hops` (1–3, default 1); optionally filter relationship types (CSV) and cap with `limit`. Returns the connected nodes nearest-first; empty if this node isn't persisted yet.",
       "inputSchema": {
@@ -161,7 +161,7 @@
       "className": "LagoInvoice"
     },
     {
-      "namespace": "invoice",
+      "namespace": "lago_invoice",
       "name": "writeOff",
       "description": "Write off what is owed: Lago voids the invoice, and nothing more is expected on it. Final; a void cannot be undone. Refused here for an invoice already paid, before anything is sent.",
       "inputSchema": {
