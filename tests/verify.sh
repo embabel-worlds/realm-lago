@@ -47,7 +47,16 @@ kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Co
 view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
 # A refused query has no rows and an `error`; reading that as 0 once passed an exactness check
 # whose query the engine had refused outright. So a refusal prints REFUSED, which no check expects.
-n() { python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("rows") or []; print("REFUSED: " + str(d["error"])[:160] if d.get("error") else (r[0]["n"] if r else 0))'; }
+# A figure the engine says is short (PARTIAL_RESULT, or PRODUCER_ERROR when Lago did not answer a
+# page) prints PARTIAL with the engine's own reason: under load "got 200" is one page of the books,
+# and the drift is Lago's, not the realm's.
+n() { python3 -c '
+import json, sys
+d = json.load(sys.stdin); r = d.get("rows") or []
+short = [w for w in d.get("warnings") or [] if w.startswith(("PARTIAL_RESULT:", "PRODUCER_ERROR:"))]
+if d.get("error"): print("REFUSED: " + str(d["error"])[:160])
+elif short: print("PARTIAL %s: %s" % (r[0]["n"] if r else 0, short[0][:200]))
+else: print(r[0]["n"] if r else 0)'; }
 calls() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("apiCalls", ""))'; }
 vcalls() { printf '%s' "$1" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("metrics") or {}).get("externalCalls", ""))'; }
 # Read from stdin: a whole book of rows passed as an argument is past the system's argument limit.
