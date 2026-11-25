@@ -110,8 +110,13 @@
     scopeKey: "Bookkeeping: the books scope this customer was fetched under. Not a business fact."
     term: "Bookkeeping: the search term this customer was found by, when reached through LagoCustomerSearch. Not a business fact."
   virtualJoins:
+    # implicitDoor: the customers book is what a bare `MATCH (c:BillingCustomer)` reads, and what the
+    # BILLED_AS spine edge is answered from (it rides the hub) when reading the book is cheaper than
+    # asking Lago about each account, which it is from a few dozen accounts up: 3,356 customers are
+    # 17 pages, where 180 accounts were 180 searches. The book's count (Lago's total_count, exact for
+    # customers and narrowed by search_term, unlike the invoice list's) is what prices that choice.
     - { anchorLabel: LagoBooks, relationship: HAS_CUSTOMER, keyField: scope,
-        recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000,
+        recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000, implicitDoor: true,
         description: "Every customer on the books. A filter on externalId is sent to Lago (one call); a count is Lago's own total (one call)." }
     - { anchorLabel: LagoCustomerSearch, relationship: FINDS, keyField: term,
         recordKeyField: term, producer: lagoCustomersBySearch, maxFanoutTotal: 5000,
