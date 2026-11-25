@@ -292,9 +292,9 @@
   cache: { kind: ttl, seconds: 300, negativeTtlSeconds: 300 }
 
 # One customer's subscriptions in EVERY status, one call: "did they ever cancel", "what did they
-# have before". Read whole for the same reason as the active list above. Its join declares no
-# materializedKeyField, unlike the active one: the sweep that would stand in for it is the active
-# list, which is not every status (see HAS_ANY_SUBSCRIPTION in types/lago.yml).
+# have before". Read whole for the same reason as the active list above. Past the per-customer
+# cap its join is answered from lagoSubscriptionsAnyStatus, named as its sweepDoor, never from the
+# active list (see HAS_ANY_SUBSCRIPTION in types/lago.yml).
 - name: lagoSubscriptionsByCustomerAnyStatus
   kind: api
   operation: lagoSubscriptionsList
