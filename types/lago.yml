@@ -110,8 +110,13 @@
     scopeKey: "Bookkeeping: the books scope this customer was fetched under. Not a business fact."
     term: "Bookkeeping: the search term this customer was found by, when reached through LagoCustomerSearch. Not a business fact."
   virtualJoins:
+    # implicitDoor: the customers book is what a bare `MATCH (c:BillingCustomer)` reads, and what the
+    # BILLED_AS spine edge is answered from (it rides the hub) when reading the book is cheaper than
+    # asking Lago about each account, which it is from a few dozen accounts up: 3,356 customers are
+    # 17 pages, where 180 accounts were 180 searches. The book's count (Lago's total_count, exact for
+    # customers and narrowed by search_term, unlike the invoice list's) is what prices that choice.
     - { anchorLabel: LagoBooks, relationship: HAS_CUSTOMER, keyField: scope,
-        recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000,
+        recordKeyField: scopeKey, producer: lagoCustomersAll, maxFanoutTotal: 50000, implicitDoor: true,
         description: "Every customer on the books. A filter on externalId is sent to Lago (one call); a count is Lago's own total (one call)." }
     - { anchorLabel: LagoCustomerSearch, relationship: FINDS, keyField: term,
         recordKeyField: term, producer: lagoCustomersBySearch, maxFanoutTotal: 5000,
@@ -207,18 +212,16 @@
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
         materializedKeyField: customerExternalId,
         description: "A customer's ACTIVE subscriptions: one call per customer." }
-    # No materializedKeyField here, ON PURPOSE, though HAS_SUBSCRIPTION above declares one. A join
-    # that declares it is answered, when its customers are too many to ask one by one, from the
-    # target's implicit door matched on the key — and BillingSubscription's implicit door is the
-    # ACTIVE list (lagoSubscriptionsAll). Read that way, "every subscription this customer ever had"
-    # would come back as its active ones only, with nothing to say a terminated or canceled one was
-    # left out. The any-status door (lagoSubscriptionsAnyStatus) has every record, but a type has
-    # ONE implicit door, and moving it there would make a bare `MATCH (s:BillingSubscription)` mean
-    # every status, which every billing view reads as "what bills". Without the key that shortcut is
-    # never taken, so this edge is never answered short. A question over many customers' history
-    # walks (:LagoBooks)-[:HAS_ANY_SUBSCRIPTION]->(s) and matches s.customerExternalId instead.
+    # materializedKeyField AND sweepDoor, together. With the key, a question over more customers than
+    # one fetch may ask for is answered from a sweep matched on customerExternalId. The sweep must be
+    # the ANY-STATUS book: BillingSubscription's implicit door is the ACTIVE list
+    # (lagoSubscriptionsAll), and read that way "every subscription these customers ever had" would
+    # come back as their active ones, with nothing to say the rest were left out. sweepDoor names
+    # lagoSubscriptionsAnyStatus, which holds every status, so the implicit door can stay the active
+    # list every billing view reads as "what bills".
     - { anchorLabel: LagoCustomer, relationship: HAS_ANY_SUBSCRIPTION, keyField: externalId,
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomerAnyStatus,
+        materializedKeyField: customerExternalId, sweepDoor: lagoSubscriptionsAnyStatus,
         description: "A customer's subscriptions in every status — what they had, and when it ended: one call per customer." }
   examples:
     # STEERING — churn is TERMINATED, reached through HAS_ANY_SUBSCRIPTION; the plain edge is active only.
