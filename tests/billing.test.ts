@@ -1,7 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 import { entityForTest, mockGateway } from "@embabel/runtime-types";
-import { LagoCustomer } from "../src/api/customer";
-import { LagoInvoice } from "../src/api/invoice";
+import { LagoCustomer } from "../src/api/lago-customer";
+import { LagoInvoice } from "../src/api/lago-invoice";
 import type { LagoWriteGateway } from "../src/api/lago";
 
 describe("LagoCustomer.subscribe", () => {
@@ -35,5 +36,17 @@ describe("LagoInvoice.writeOff", () => {
     const paid = entityForTest(LagoInvoice, { id: "inv-1", number: "ACM-0001", paymentStatus: "succeeded" }, mockGateway<LagoWriteGateway>({ lago: { lagoInvoiceVoid } }));
     await expect(paid.writeOff()).rejects.toThrow(/is paid/);
     expect(lagoInvoiceVoid).not.toHaveBeenCalled();
+  });
+});
+
+/*
+ * A namespace two installed realms both contribute is withdrawn from both, every function in it,
+ * so a name a CRM realm also uses ("customer") takes subscribe away whenever that realm is
+ * installed beside this one. The namespace is the file's name under src/api/.
+ */
+describe("the published namespaces", () => {
+  it("are this realm's own", () => {
+    const manifest = JSON.parse(readFileSync("dist/manifest.json", "utf8")) as { entries: { namespace: string }[] };
+    expect([...new Set(manifest.entries.map((e) => e.namespace))].sort()).toEqual(["lago_customer", "lago_invoice"]);
   });
 });
