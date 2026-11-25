@@ -207,6 +207,16 @@
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomer,
         materializedKeyField: customerExternalId,
         description: "A customer's ACTIVE subscriptions: one call per customer." }
+    # No materializedKeyField here, ON PURPOSE, though HAS_SUBSCRIPTION above declares one. A join
+    # that declares it is answered, when its customers are too many to ask one by one, from the
+    # target's implicit door matched on the key — and BillingSubscription's implicit door is the
+    # ACTIVE list (lagoSubscriptionsAll). Read that way, "every subscription this customer ever had"
+    # would come back as its active ones only, with nothing to say a terminated or canceled one was
+    # left out. The any-status door (lagoSubscriptionsAnyStatus) has every record, but a type has
+    # ONE implicit door, and moving it there would make a bare `MATCH (s:BillingSubscription)` mean
+    # every status, which every billing view reads as "what bills". Without the key that shortcut is
+    # never taken, so this edge is never answered short. A question over many customers' history
+    # walks (:LagoBooks)-[:HAS_ANY_SUBSCRIPTION]->(s) and matches s.customerExternalId instead.
     - { anchorLabel: LagoCustomer, relationship: HAS_ANY_SUBSCRIPTION, keyField: externalId,
         recordKeyField: customerExternalId, producer: lagoSubscriptionsByCustomerAnyStatus,
         description: "A customer's subscriptions in every status — what they had, and when it ended: one call per customer." }
