@@ -45,22 +45,78 @@ at_most() {
 kg() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/admin/kg/execute" -H 'Content-Type: application/json' \
          -d "$(python3 -c 'import json,sys; print(json.dumps({"cypher": sys.argv[1]}))' "$1")"; }
 view() { curl -s -K "$AUTHCFG" -X POST "$APPLIANCE/api/v1/views/$1/invoke" -H 'Content-Type: application/json' -d "{\"args\":$2}"; }
-# A refused query has no rows and an `error`; reading that as 0 once passed an exactness check
-# whose query the engine had refused outright. So a refusal prints REFUSED, which no check expects.
-# A figure the engine says is short (PARTIAL_RESULT, or PRODUCER_ERROR when Lago did not answer a
-# page) prints PARTIAL with the engine's own reason: under load "got 200" is one page of the books,
-# and the drift is Lago's, not the realm's.
-n() { python3 -c '
+# Whether an answer is the whole truth is the ENGINE's to say, and it says it beside the rows: a
+# query's `error`, `reason` and `warnings` (each opening with its code), a view's `status`,
+# `outcome` and `warnings`. A figure read past them reported a source that failed under load, or a
+# page it capped, as drift in the realm. So every figure goes through short(): a refusal prints
+# REFUSED and a short answer PARTIAL <figure>: <the engine's reason>, which no check expects.
+SHORT_PY=$(cat <<'PY'
 import json, sys
-d = json.load(sys.stdin); r = d.get("rows") or []
-short = [w for w in d.get("warnings") or [] if w.startswith(("PARTIAL_RESULT:", "PRODUCER_ERROR:"))]
-if d.get("error"): print("REFUSED: " + str(d["error"])[:160])
-elif short: print("PARTIAL %s: %s" % (r[0]["n"] if r else 0, short[0][:200]))
-else: print(r[0]["n"] if r else 0)'; }
+# Raw warning codes that mean rows or values may be missing (the engine's incompleteness kinds).
+# Cost notes (FILTERED_IN_GRAPH, AGGREGATE_NOT_PUSHED, EMPTY_NOT_KEPT, PUSHDOWN_VALUE_UNMATCHED),
+# FILTER_STARVED (an honest empty), STALE_COPY, FIELDS_WITHHELD and UNKNOWN_VIA leave every row in place.
+SHORT_CODES = (
+    "PARTIAL_RESULT", "PRODUCER_ERROR", "NEEDS_FILTER", "NEEDS_PRODUCER", "FILTER_REJECTED",
+    "UNPUSHED_FILTER", "AMBIGUOUS_LABEL", "INCOMPLETE_TRAVERSAL", "INCOMPLETE_RANKING",
+    "INCOMPLETE_AGGREGATE", "INCOMPLETE_INPUT", "MATERIALIZATION_FAILED", "REDUCTION_FAILED",
+    "UNPARSEABLE_ANSWER", "TERMS_UNAVAILABLE", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+    "FOLLOW_CAPPED", "UNLINKED_CHILDREN", "RESOLUTION_DROPPED", "AGENTIC_DEGRADED",
+    "SOURCE_UNANSWERED",
+)
+# The typed `reason` a query result carries when it is not a clean answer and not an honest empty.
+SHORT_REASONS = ("UNBOUNDED", "PARTIAL_NOT_MATCHED", "UNPUSHED_FILTER", "DISCONNECTED",
+                 "INTERNAL_ERROR", "WRITE_IN_PROGRESS", "KILLED", "TOO_EXPENSIVE")
+# Public warning codes on a view envelope that mean the same.
+SHORT_PUBLIC = ("PARTIAL", "REDUCTION_FAILED", "COMPUTE_FAILED", "PROPERTY_NOT_STORED",
+                "AGENTIC_DEGRADED", "RATE_LIMITED", "SOURCE_UNAVAILABLE", "SOURCE_REJECTED",
+                "INVALID_FILTER", "UNPUSHED_FILTER", "TOO_BROAD", "FETCH_CAPPED",
+                "INDEX_UNAVAILABLE", "ARGUMENT_REFUSED")
+
+
+def short(d, figure=None):
+    tag = "PARTIAL" if figure is None else "PARTIAL %s" % (figure,)
+    if not isinstance(d, dict):
+        return "REFUSED: not an engine answer: " + str(d)[:160]
+    if "outcome" in d or "status" in d:  # a view envelope
+        err = d.get("error") or {}
+        if d.get("status") != "SUCCEEDED":
+            return "REFUSED: %s %s" % (d.get("status"), (err.get("code", "") + " " + err.get("message", "")).strip()[:160] if isinstance(err, dict) else str(err)[:160])
+        ws = [w for w in d.get("warnings") or [] if isinstance(w, dict) and w.get("code") in SHORT_PUBLIC]
+        if d.get("outcome") not in ("OK", "EMPTY") or ws:
+            why = ws[0]["code"] + ": " + ws[0].get("message", "") if ws else "outcome " + str(d.get("outcome"))
+            return "%s: %s" % (tag, why[:200])
+        return None
+    if d.get("error"):
+        return "REFUSED: " + str(d["error"])[:160]
+    if d.get("run"):
+        return "%s: the run had not finished (%s)" % (tag, d["run"])
+    ws = [w for w in d.get("warnings") or [] if isinstance(w, str) and w.split(":", 1)[0].strip() in SHORT_CODES]
+    if ws:
+        return "%s: %s" % (tag, ws[0][:200])
+    if d.get("reason") in SHORT_REASONS:
+        return "%s: reason %s" % (tag, d["reason"])
+    return None
+PY
+)
+# The figure in column n of a query answer on stdin.
+n() { python3 -c "$SHORT_PY
+d = json.load(sys.stdin); r = d.get('rows') or []
+v = r[0].get('n') if r else 0
+print(short(d, v) or v)"; }
+# How many rows a view answered. Read from stdin: a whole book of rows passed as an argument is past
+# the system's argument limit.
+rows() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.load(sys.stdin); data = d.get('data') if isinstance(d, dict) else None
+v = len(data) if isinstance(data, list) else 0
+print(short(d, v) or v)"; }
+# whole ANSWER SNIPPET: run SNIPPET over the parsed answer, as `d`, only when the engine says it is
+# whole; otherwise print why it is not, in place of the figure.
+whole() { printf '%s' "$1" | python3 -c "$SHORT_PY
+d = json.load(sys.stdin); s = short(d)
+if s: print(s); sys.exit(0)
+$2"; }
 calls() { printf '%s' "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("apiCalls", ""))'; }
 vcalls() { printf '%s' "$1" | python3 -c 'import json,sys; print((json.load(sys.stdin).get("metrics") or {}).get("externalCalls", ""))'; }
-# Read from stdin: a whole book of rows passed as an argument is past the system's argument limit.
-rows() { printf '%s' "$1" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["data"]) if isinstance(d.get("data"), list) else "REFUSED: " + str(d.get("error") or d)[:160])'; }
 t() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))[sys.argv[2]]; print(v)' "$TRUTHF" "$1"; }
 
 echo "== L0: ground truth, from Lago directly =="
@@ -139,9 +195,9 @@ V=$(view LagoCustomerInvoices "$(python3 -c 'import json,sys; print(json.dumps({
 check "view: one customer's invoices, by exact name" "$PROBE_INVOICES" "$(rows "$V")"
 at_most "view: one customer's invoices, by exact name (search + invoices)" 2 "$(vcalls "$V")"
 V=$(view LagoCustomerInvoices "$(python3 -c 'import json,sys; print(json.dumps({"customer": sys.argv[1], "paymentStatus": "unpaid"}))' "$PROBE_NAME")")
-check "view: what that customer owes, per currency (cents)" "$PROBE_OWED" "$(echo "$V" | python3 -c '
+check "view: what that customer owes, per currency (cents)" "$PROBE_OWED" "$(whole "$V" '
 import json,sys,collections; c=collections.Counter()
-for r in json.load(sys.stdin)["data"]: c[r["currency"]] += round(r["amountDue"] * 100)
+for r in d["data"]: c[r["currency"]] += round(r["amountDue"] * 100)
 print(",".join(f"{k}:{v}" for k, v in sorted(c.items())))')"
 R=$(kg "MATCH (b:LagoBooks)-[:HAS_INVOICE]->(i:BillingInvoice) WHERE i.issuedOn = '$DAY' RETURN count(i) AS n")
 check "invoices Lago issued on $DAY" "$DAY_INVOICES" "$(echo "$R" | n)"
@@ -203,12 +259,12 @@ echo "== L1b: plans, and every subscription reaches its plan =="
 check "plans, asked for as BillingPlan" "$(t plans)" "$(kg "MATCH (b:LagoBooks)-[:HAS_PLAN]->(p:BillingPlan) RETURN count(p) AS n" | n)"
 check "subscriptions that reach their plan by ON_PLAN" "$SUBS" "$(kg "MATCH (b:LagoBooks)-[:HAS_SUBSCRIPTION]->(s:BillingSubscription)-[:ON_PLAN]->(p:BillingPlan) RETURN count(s) AS n" | n)"
 V=$(view LagoPlanMix '{}')
-check "view: the plan most subscriptions are on, by name" "$(t topPlan)" "$(echo "$V" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["plan"], r["activeSubscriptions"]))')"
-check "view: plan mix covers every active subscription" "$SUBS" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["activeSubscriptions"] for r in json.load(sys.stdin)["data"]))')"
+check "view: the plan most subscriptions are on, by name" "$(t topPlan)" "$(whole "$V" 'import json,sys; r=d["data"][0]; print("%s:%d" % (r["plan"], r["activeSubscriptions"]))')"
+check "view: plan mix covers every active subscription" "$SUBS" "$(whole "$V" 'import json,sys; print(sum(r["activeSubscriptions"] for r in d["data"]))')"
 
 echo "== L2: the views reconcile =="
 V=$(view LagoPaymentStatusCounts '{}')
-check "view: failed invoices" "$FAILED" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["invoices"] for r in json.load(sys.stdin)["data"] if r["paymentStatus"] == "failed"))')"
+check "view: failed invoices" "$FAILED" "$(whole "$V" 'import json,sys; print(sum(r["invoices"] for r in d["data"] if r["paymentStatus"] == "failed"))')"
 V=$(view LagoUnpaidInvoices '{"limit":100000}')
 check "view: unpaid invoices (empty filters must not filter)" "$UNPAID" "$(rows "$V")"
 V=$(view LagoUnpaidInvoices '{"paymentStatus":"failed","limit":100000}')
@@ -216,25 +272,33 @@ check "view: unpaid, failed only" "$FAILED" "$(rows "$V")"
 V=$(view LagoUnpaidInvoices '{"currency":"GBP","limit":100000}')
 check "view: unpaid, in GBP" "$(t unpaidGBP)" "$(rows "$V")"
 V=$(view LagoReceivablesByCustomer '{}')
-check "view: who owes most, and how much" "$TOP:$TOP_CENTS" "$(echo "$V" | python3 -c 'import json,sys; r=json.load(sys.stdin)["data"][0]; print("%s:%d" % (r["customer"], round(r["amountDue"] * 100)))')"
+check "view: who owes most, and how much" "$TOP:$TOP_CENTS" "$(whole "$V" 'import json,sys; r=d["data"][0]; print("%s:%d" % (r["customer"], round(r["amountDue"] * 100)))')"
 V=$(view LagoRecurringRevenue '{"limit":100000}')
-check "view: active subscriptions" "$SUBS" "$(echo "$V" | python3 -c 'import json,sys; print(sum(r["activeSubscriptions"] for r in json.load(sys.stdin)["data"]))')"
-check "view: annual recurring revenue per currency (cents), through each plan's interval" "$(t annual)" "$(echo "$V" | python3 -c '
+check "view: active subscriptions" "$SUBS" "$(whole "$V" 'import json,sys; print(sum(r["activeSubscriptions"] for r in d["data"]))')"
+check "view: annual recurring revenue per currency (cents), through each plan's interval" "$(t annual)" "$(whole "$V" '
 import json,sys,collections; c=collections.Counter()
-for r in json.load(sys.stdin)["data"]: c[r["currency"]] += round(r["annualRecurring"] * 100)
+for r in d["data"]: c[r["currency"]] += round(r["annualRecurring"] * 100)
 print(",".join(f"{k}:{v}" for k, v in sorted(c.items())))')"
-check "view: every customer row carries a name" "0" "$(echo "$V" | python3 -c 'import json,sys; print(sum(1 for r in json.load(sys.stdin)["data"] if not r["customer"]))')"
+check "view: every customer row carries a name" "0" "$(whole "$V" 'import json,sys; print(sum(1 for r in d["data"] if not r["customer"]))')"
 V=$(view LagoSubscriptionsByStatus '{"status":"active","limit":100000}')
 check "view: subscriptions by status, active" "$SUBS" "$(rows "$V")"
 
 if [ -z "$SKIP_ACCOUNT_JOIN" ]; then
   echo "== L3: an account the CRM knows reaches what billing knows =="
-  # Accounts exist once a CRM realm's customers have been read; read them.
+  # Accounts exist once a CRM realm's customers have been read; read them. The spine is whole only
+  # once EVERY realm feeding it has been read recently, and until then the engine marks a count over
+  # it a lower bound (SPINE_NOT_BUILT), so read the support desk too. `count(r.id)`, not `count(r)`:
+  # a bare count is answered by the desk's own total in one call and reads no conversation. Where no
+  # support realm is installed that query is refused, and nothing reads its answer.
   kg "MATCH (b:OdooBook)-[:HAS_CUSTOMER]->(c:OdooCustomer) RETURN count(c) AS n" >/dev/null
+  kg "MATCH (:ChatwootDesk {status:'all'})-[:HAS_CASE]->(r:ChatwootConversation) RETURN count(r.id) AS n" >/dev/null
   # The books' customers are swept first, so BILLED_AS rides them (ridesHub) at any book size.
   BILLED=$(kg "MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer) MATCH (a:CustomerAccount)-[:BILLED_AS]->(c) RETURN count(DISTINCT a) AS n" | n)
-  if [ "$BILLED" -gt 0 ]; then echo "  ok   accounts joined to a billing customer = $BILLED (non-zero)"
-  else echo "  FAIL accounts joined to a billing customer: 0 — the cross-realm join is not there"; fail=1; fi
+  case "$BILLED" in
+    ''|*[!0-9]*) echo "  FAIL accounts joined to a billing customer: $BILLED"; fail=1 ;;
+    0) echo "  FAIL accounts joined to a billing customer: 0 — the cross-realm join is not there"; fail=1 ;;
+    *) echo "  ok   accounts joined to a billing customer = $BILLED (non-zero)" ;;
+  esac
   # Exactness: every link is the SAME company. Lago's search is a substring match.
   WRONG=$(kg "MATCH (b:LagoBooks)-[:HAS_CUSTOMER]->(c:BillingCustomer) MATCH (a:CustomerAccount)-[:BILLED_AS]->(c) WHERE NOT toLower(c.url) CONTAINS a.accountKey RETURN count(c) AS n" | n)
   check "billing customers linked to an account that is not theirs" "0" "$WRONG"
